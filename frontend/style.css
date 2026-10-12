@@ -1,0 +1,133 @@
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+body {
+  font-family: 'Segoe UI', system-ui, sans-serif;
+  background: #f5f7fa;
+  height: 100vh;
+  overflow: hidden;
+}
+
+.app {
+  display: grid;
+  grid-template-columns: 340px 1fr;
+  height: 100vh;
+}
+
+.sidebar {
+  background: #fff;
+  border-right: 1px solid #e1e6ec;
+  padding: 24px;
+  overflow-y: auto;
+  box-shadow: 2px 0 8px rgba(0,0,0,0.04);
+}
+
+.sidebar h1 {
+  font-size: 20px;
+  margin-bottom: 20px;
+  color: #1a2332;
+}
+
+.sidebar section {
+  margin-bottom: 16px;
+}
+
+.sidebar label {
+  display: block;
+  font-size: 12px;
+  font-weight: 600;
+  color: #5a6b7c;
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+.sidebar input,
+.sidebar select,
+.sidebar textarea {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  font-family: inherit;
+  font-size: 13px;
+  color: #1a2332;
+  background: #fff;
+  transition: border-color 0.15s;
+}
+
+.sidebar input:focus,
+.sidebar textarea:focus,
+.sidebar select:focus {
+  outline: none;
+  border-color: #3b82f6;
+}
+
+.sidebar textarea {
+  resize: vertical;
+  font-family: 'Consolas', monospace;
+  font-size: 12px;
+  line-height: 1.5;
+}
+
+.buttons {
+  display: flex;
+  gap: 8px;
+  margin-top: 20px;
+}
+
+button {
+  flex: 1;
+  padding: 10px 16px;
+  border: none;
+  border-radius: 6px;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.15s;
+}
+
+button.primary {
+  background: #3b82f6;
+  color: #fff;
+}
+
+button.primary:hover { background: #2563eb; }
+
+button.secondary {
+  background: #eef2f7;
+  color: #1a2332;
+}
+
+button.secondary:hover { background: #dde5ef; }
+
+button:disabled {
+  opacity: 0.5;
+  cursor: not-allowed;
+}
+
+.status {
+  margin-top: 14px;
+  font-size: 12px;
+  color: #5a6b7c;
+  min-height: 18px;
+}
+
+.status.error { color: #dc2626; }
+.status.success { color: #16a34a; }
+
+.preview {
+  background: #fff;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 20px;
+}
+
+#svg {
+  max-width: 100%;
+  max-height: 100%;
+  border: 1px dashed #cbd5e0;
+  background:
+    repeating-linear-gradient(0deg, #fafbfc, #fafbfc 19px, #eef2f7 20px),
+    repeating-linear-gradient(90deg, #fafbfc, #fafbfc 19px, #eef2f7 20px);
+}
