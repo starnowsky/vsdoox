@@ -246,3 +246,55 @@ body {
 .modal button.primary:hover {
   background: #2563eb;
 }
+
+/* список взаимодействий */
+.row select,
+.row input {
+  flex: 1;
+  min-width: 0;
+}
+
+.connections {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 180px;
+  overflow-y: auto;
+}
+
+.connections li {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.connections button.link {
+  flex: 1;
+  background: none;
+  border: none;
+  color: #1e3a8a;
+  text-align: left;
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.connections button.link:hover {
+  text-decoration: underline;
+}
+
+.connections .conn-meta {
+  color: #5a6b7c;
+  font-size: 11px;
+  margin-left: 4px;
+}
+
+.connections button.del {
+  background: none;
+  border: none;
+  color: #dc2626;
+  cursor: pointer;
+  font-size: 13px;
+  padding: 2px 4px;
+}

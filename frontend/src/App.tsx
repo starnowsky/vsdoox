@@ -21,7 +21,7 @@ import {
   saveProject,
 } from './api';
 import type { ProjectSummary } from './api';
-import type { GraphLink, GraphNode, NodeType, PathResult, Project } from './types';
+import type { Connection as Interaction, GraphLink, GraphNode, NodeType, PathResult, Project } from './types';
 
 const nodeTypes: NodeTypes = {
   server: DeviceNode,
@@ -118,9 +118,13 @@ export default function App() {
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState('');
 
-  const [sourceId, setSourceId] = useState('');
-  const [targetId, setTargetId] = useState('');
+  const [connections, setConnections] = useState<Interaction[]>([]);
   const [pathResult, setPathResult] = useState<PathResult | null>(null);
+
+  const [connSource, setConnSource] = useState('');
+  const [connTarget, setConnTarget] = useState('');
+  const [connProtocol, setConnProtocol] = useState('tcp');
+  const [connPort, setConnPort] = useState('');
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -174,14 +178,14 @@ export default function App() {
         name: projectName,
         nodes: graph.nodes,
         links: graph.links,
-        connections: [],
+        connections,
       });
       setStatus('Сохранено (проект #' + pid + ')');
       await refreshProjects();
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [owner, projectName, projectId, nodes, edges, refreshProjects]);
+  }, [owner, projectName, projectId, nodes, edges, connections, refreshProjects]);
 
   const handleLoad = useCallback(
     async (id: number) => {
@@ -190,6 +194,7 @@ export default function App() {
         const { nodes: ns, edges: es } = fromProject(project);
         setNodes(ns);
         setEdges(es);
+        setConnections(project.connections);
         setProjectId(project.id);
         setProjectName(project.name);
         setPathResult(null);
@@ -198,17 +203,18 @@ export default function App() {
         setStatus((e as Error).message);
       }
     },
-    [setNodes, setEdges],
+    [setNodes, setEdges, setConnections],
   );
 
   const handleNew = useCallback(() => {
     setNodes([]);
     setEdges([]);
+    setConnections([]);
     setProjectId(null);
     setProjectName('Схема L2');
     setPathResult(null);
     setStatus('');
-  }, [setNodes, setEdges]);
+  }, [setNodes, setEdges, setConnections]);
 
   const handleDelete = useCallback(
     async (id: number) => {
@@ -217,6 +223,7 @@ export default function App() {
         if (projectId === id) {
           setNodes([]);
           setEdges([]);
+          setConnections([]);
           setProjectId(null);
           setProjectName('Схема L2');
           setPathResult(null);
@@ -227,29 +234,51 @@ export default function App() {
         setStatus((e as Error).message);
       }
     },
-    [projectId, setNodes, setEdges, refreshProjects],
+    [projectId, setNodes, setEdges, setConnections, refreshProjects],
   );
 
-  const handlePath = useCallback(async () => {
-    if (!sourceId || !targetId) {
-      setStatus('Выберите два узла');
+  const handleAddConnection = useCallback(() => {
+    if (!connSource || !connTarget) {
+      setStatus('Выберите два узла для взаимодействия');
       return;
     }
-    if (sourceId === targetId) {
+    if (connSource === connTarget) {
       setStatus('Выберите разные узлы');
       return;
     }
-    try {
-      const graph = toGraph(nodes, edges);
-      const res = await analyzePath(graph.nodes, graph.links, sourceId, targetId);
-      setPathResult(res);
-      setStatus(
-        res.found ? 'Маршрут: ' + res.firewalls.length + ' МЭ на пути' : 'Путь не найден',
-      );
-    } catch (e) {
-      setStatus((e as Error).message);
-    }
-  }, [sourceId, targetId, nodes, edges]);
+    const conn: Interaction = {
+      id: genId(),
+      source_id: connSource,
+      target_id: connTarget,
+      protocol: connProtocol || undefined,
+      port: connPort || undefined,
+      attributes: {},
+    };
+    setConnections((cs) => cs.concat(conn));
+    setConnPort('');
+  }, [connSource, connTarget, connProtocol, connPort]);
+
+  const handleShowConnection = useCallback(
+    async (conn: Interaction) => {
+      try {
+        const graph = toGraph(nodes, edges);
+        const res = await analyzePath(graph.nodes, graph.links, conn.source_id, conn.target_id);
+        setPathResult(res);
+        setStatus(
+          res.found
+            ? 'Взаимодействие: ' + res.firewalls.length + ' МЭ на пути'
+            : 'Путь не найден',
+        );
+      } catch (e) {
+        setStatus((e as Error).message);
+      }
+    },
+    [nodes, edges],
+  );
+
+  const handleDeleteConnection = useCallback((id: string) => {
+    setConnections((cs) => cs.filter((c) => c.id !== id));
+  }, []);
 
   const handleEditSave = useCallback(() => {
     if (!editingNodeId) return;
@@ -328,6 +357,9 @@ export default function App() {
     : null;
   const editingFields = editingType ? ATTR_FIELDS[editingType] : [];
 
+  const nodeName = (id: string): string =>
+    nodes.find((n) => n.id === id)?.data.name ?? id;
+
   return (
     <div className="app">
       <aside className="sidebar">
@@ -379,8 +411,8 @@ export default function App() {
         </section>
 
         <section>
-          <label>Маршрут (через МЭ)</label>
-          <select value={sourceId} onChange={(e) => setSourceId(e.target.value)}>
+          <label>Взаимодействия (протокол/порт)</label>
+          <select value={connSource} onChange={(e) => setConnSource(e.target.value)}>
             <option value="">— откуда —</option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>
@@ -388,7 +420,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <select value={targetId} onChange={(e) => setTargetId(e.target.value)}>
+          <select value={connTarget} onChange={(e) => setConnTarget(e.target.value)}>
             <option value="">— куда —</option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>
@@ -396,9 +428,38 @@ export default function App() {
               </option>
             ))}
           </select>
-          <button className="primary" onClick={handlePath}>
-            Показать маршрут
+          <div className="row">
+            <select value={connProtocol} onChange={(e) => setConnProtocol(e.target.value)}>
+              <option value="tcp">TCP</option>
+              <option value="udp">UDP</option>
+              <option value="icmp">ICMP</option>
+              <option value="any">ANY</option>
+            </select>
+            <input
+              value={connPort}
+              onChange={(e) => setConnPort(e.target.value)}
+              placeholder="Порт"
+            />
+          </div>
+          <button className="primary" onClick={handleAddConnection}>
+            Добавить взаимодействие
           </button>
+          {connections.length > 0 && (
+            <ul className="connections">
+              {connections.map((c) => (
+                <li key={c.id}>
+                  <button className="link" onClick={() => handleShowConnection(c)}>
+                    {nodeName(c.source_id)} → {nodeName(c.target_id)}
+                    <span className="conn-meta">
+                      {c.protocol ?? 'any'}
+                      {c.port ? ':' + c.port : ''}
+                    </span>
+                  </button>
+                  <button className="del" onClick={() => handleDeleteConnection(c.id)}>✕</button>
+                </li>
+              ))}
+            </ul>
+          )}
         </section>
 
         {pathResult && (
