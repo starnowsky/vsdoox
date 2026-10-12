@@ -175,3 +175,74 @@ body {
   outline: 3px solid #ef4444;
   outline-offset: 1px;
 }
+
+/* модальное окно свойств узла */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.35);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+
+.modal {
+  background: #fff;
+  border-radius: 10px;
+  padding: 20px;
+  width: 320px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
+}
+
+.modal h2 {
+  font-size: 16px;
+  margin-bottom: 4px;
+}
+
+.modal label {
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  color: #5a6b7c;
+}
+
+.modal input {
+  padding: 7px 9px;
+  border: 1px solid #d1d9e0;
+  border-radius: 6px;
+  font-size: 13px;
+  font-family: inherit;
+}
+
+.modal .row {
+  display: flex;
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.modal button {
+  flex: 1;
+  padding: 8px 10px;
+  border: 1px solid #d1d9e0;
+  background: #f1f5f9;
+  border-radius: 6px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 600;
+  font-family: inherit;
+}
+
+.modal button.primary {
+  background: #3b82f6;
+  color: #fff;
+  border-color: #3b82f6;
+}
+
+.modal button.primary:hover {
+  background: #2563eb;
+}

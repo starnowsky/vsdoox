@@ -20,9 +20,27 @@ const STYLES: Record<string, StyleDef> = {
   datacenter: { bg: '#fef3c7', border: '#d97706', icon: '🏢', color: '#78350f' },
 };
 
+function subtitleFor(
+  type: string | undefined,
+  attrs: Record<string, unknown> | undefined,
+): string {
+  if (!attrs) return '';
+  switch (type) {
+    case 'server':
+      return typeof attrs.ip === 'string' ? attrs.ip : '';
+    case 'network':
+      return typeof attrs.cidr === 'string' ? attrs.cidr : '';
+    case 'datacenter':
+      return typeof attrs.location === 'string' ? attrs.location : '';
+    default:
+      return '';
+  }
+}
+
 export function DeviceNode(props: NodeProps<Node<DeviceData>>) {
   const style = STYLES[props.type ?? 'server'] ?? STYLES.server;
   const name = props.data?.name ?? '';
+  const subtitle = subtitleFor(props.type, props.data?.attributes);
 
   return (
     <div
@@ -42,6 +60,9 @@ export function DeviceNode(props: NodeProps<Node<DeviceData>>) {
     >
       <Handle type="target" position={Position.Left} />
       <div style={{ fontWeight: 600 }}>{style.icon} {name}</div>
+      {subtitle ? (
+        <div style={{ fontSize: 11, opacity: 0.85, marginTop: 2 }}>{subtitle}</div>
+      ) : null}
       <div style={{ fontSize: 11, opacity: 0.7, textTransform: 'uppercase', letterSpacing: 0.5 }}>
         {props.type}
       </div>

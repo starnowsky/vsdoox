@@ -39,6 +39,29 @@ const DEFAULT_NAMES: Record<NodeType, string> = {
 
 const NODE_TYPES: NodeType[] = ['server', 'firewall', 'network', 'datacenter'];
 
+interface AttrField {
+  key: string;
+  label: string;
+  placeholder: string;
+}
+
+const ATTR_FIELDS: Record<NodeType, AttrField[]> = {
+  server: [
+    { key: 'ip', label: 'IP-адрес', placeholder: '10.0.0.10' },
+    { key: 'ports', label: 'Порты', placeholder: '80, 443' },
+  ],
+  firewall: [
+    { key: 'zones', label: 'Зоны/интерфейсы', placeholder: 'outside, inside' },
+  ],
+  network: [
+    { key: 'cidr', label: 'CIDR', placeholder: '10.0.0.0/24' },
+    { key: 'vlan', label: 'VLAN', placeholder: '100' },
+  ],
+  datacenter: [
+    { key: 'location', label: 'Расположение', placeholder: 'Москва' },
+  ],
+};
+
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -98,6 +121,10 @@ export default function App() {
   const [sourceId, setSourceId] = useState('');
   const [targetId, setTargetId] = useState('');
   const [pathResult, setPathResult] = useState<PathResult | null>(null);
+
+  const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
+  const [editName, setEditName] = useState('');
+  const [editAttrs, setEditAttrs] = useState<Record<string, string>>({});
 
   const onConnect = useCallback(
     (conn: Connection) => {
@@ -224,6 +251,29 @@ export default function App() {
     }
   }, [sourceId, targetId, nodes, edges]);
 
+  const handleEditSave = useCallback(() => {
+    if (!editingNodeId) return;
+    setNodes((nds) =>
+      nds.map((n) =>
+        n.id === editingNodeId
+          ? {
+              ...n,
+              data: {
+                ...n.data,
+                name: editName.trim() || n.data.name,
+                attributes: editAttrs,
+              },
+            }
+          : n,
+      ),
+    );
+    setEditingNodeId(null);
+  }, [editingNodeId, editName, editAttrs, setNodes]);
+
+  const handleEditCancel = useCallback(() => {
+    setEditingNodeId(null);
+  }, []);
+
   const highlighted = useMemo(() => {
     const nodeIds = new Set<string>();
     const edgeIds = new Set<string>();
@@ -271,6 +321,12 @@ export default function App() {
     setOwner(value);
     localStorage.setItem('vsdoox.owner', value);
   };
+
+  const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) ?? null : null;
+  const editingType: NodeType | null = editingNode
+    ? ((editingNode.type as NodeType) ?? 'server')
+    : null;
+  const editingFields = editingType ? ATTR_FIELDS[editingType] : [];
 
   return (
     <div className="app">
@@ -372,6 +428,16 @@ export default function App() {
           onNodesChange={onNodesChange}
           onEdgesChange={onEdgesChange}
           onConnect={onConnect}
+          onNodeDoubleClick={(_event, node) => {
+            setEditingNodeId(node.id);
+            setEditName(node.data.name);
+            const attrs: Record<string, string> = {};
+            const a = node.data.attributes ?? {};
+            Object.keys(a).forEach((k) => {
+              attrs[k] = typeof a[k] === 'string' ? a[k] : String(a[k]);
+            });
+            setEditAttrs(attrs);
+          }}
           nodeTypes={nodeTypes}
           fitView
         >
@@ -380,6 +446,31 @@ export default function App() {
           <MiniMap />
         </ReactFlow>
       </main>
+
+      {editingNode && editingType && (
+        <div className="modal-backdrop" onClick={handleEditCancel}>
+          <div className="modal" onClick={(e) => e.stopPropagation()}>
+            <h2>Свойства узла</h2>
+            <label>Название</label>
+            <input value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
+            <label>Тип: {DEFAULT_NAMES[editingType]}</label>
+            {editingFields.map((f) => (
+              <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
+                <label>{f.label}</label>
+                <input
+                  value={editAttrs[f.key] ?? ''}
+                  placeholder={f.placeholder}
+                  onChange={(e) => setEditAttrs((prev) => ({ ...prev, [f.key]: e.target.value }))}
+                />
+              </div>
+            ))}
+            <div className="row">
+              <button onClick={handleEditCancel}>Отмена</button>
+              <button className="primary" onClick={handleEditSave}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
