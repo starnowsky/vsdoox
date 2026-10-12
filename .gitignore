@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+*.egg-info/
+
+# Переменные окружения
+.env
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

@@ -1,4 +1,2 @@
 Flask==3.0.0
 flask-cors==4.0.0
-vsdx==0.5.19
-lxml==5.1.0
