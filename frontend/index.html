@@ -1,58 +1,12 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="ru">
-<head>
-<meta charset="UTF-8">
-<title>Генератор схем Visio</title>
-<link rel="stylesheet" href="style.css">
-</head>
-<body>
-<div class="app">
-  <aside class="sidebar">
-    <h1>📐 Visio Схемы</h1>
-
-    <section>
-      <label>Название схемы</label>
-      <input id="title" type="text" value="Моя схема">
-    </section>
-
-    <section>
-      <label>Тип раскладки</label>
-      <select id="layout">
-        <option value="grid">Сетка</option>
-        <option value="horizontal">Горизонтальная</option>
-        <option value="vertical">Вертикальная</option>
-        <option value="circle">Круг</option>
-      </select>
-    </section>
-
-    <section>
-      <label>Узлы (по одному на строку, формат: id | Название)</label>
-      <textarea id="nodes" rows="6">A | Начало
-B | Обработка
-C | Решение
-D | Конец</textarea>
-    </section>
-
-    <section>
-      <label>Связи (формат: от | к, по одной на строку)</label>
-      <textarea id="edges" rows="5">A | B
-B | C
-C | D</textarea>
-    </section>
-
-    <div class="buttons">
-      <button id="previewBtn" class="secondary">Предпросмотр</button>
-      <button id="downloadBtn" class="primary">Скачать .vsdx</button>
-    </div>
-
-    <div id="status" class="status"></div>
-  </aside>
-
-  <main class="preview">
-    <svg id="svg" viewBox="0 0 1100 850" preserveAspectRatio="xMidYMid meet"></svg>
-  </main>
-</div>
-
-<script src="script.js"></script>
-</body>
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>vsdoox — редактор сетевых схем</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.tsx"></script>
+  </body>
 </html>

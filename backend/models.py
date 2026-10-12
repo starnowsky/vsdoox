@@ -1,0 +1,69 @@
+"""SQLAlchemy ORM-модели приложения."""
+from datetime import datetime, timezone
+
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy.orm import declarative_base, relationship
+
+Base = declarative_base()
+
+
+def utcnow():
+    """Текущее UTC-время без таймзоны (наивное) — простое и предсказуемое
+    хранение и на SQLite, и на PostgreSQL."""
+    return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+class User(Base):
+    __tablename__ = 'users'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), unique=True, nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    projects = relationship('Project', back_populates='owner')
+
+
+class Project(Base):
+    __tablename__ = 'projects'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(255), nullable=False)
+    owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+    updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
+    owner = relationship('User', back_populates='projects')
+    nodes = relationship('Node', back_populates='project', cascade='all, delete-orphan')
+    links = relationship('Link', back_populates='project', cascade='all, delete-orphan')
+    connections = relationship('Connection', back_populates='project', cascade='all, delete-orphan')
+
+
+class Node(Base):
+    __tablename__ = 'nodes'
+    id = Column(String(64), primary_key=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    type = Column(String(32), nullable=False)
+    name = Column(String(255), nullable=False)
+    x = Column(Float, default=0.0, nullable=False)
+    y = Column(Float, default=0.0, nullable=False)
+    attributes = Column(JSON, default=dict, nullable=False)
+    project = relationship('Project', back_populates='nodes')
+
+
+class Link(Base):
+    __tablename__ = 'links'
+    id = Column(String(64), primary_key=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    source_id = Column(String(64), nullable=False)
+    target_id = Column(String(64), nullable=False)
+    label = Column(String(255))
+    attributes = Column(JSON, default=dict, nullable=False)
+    project = relationship('Project', back_populates='links')
+
+
+class Connection(Base):
+    __tablename__ = 'connections'
+    id = Column(String(64), primary_key=True)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    source_id = Column(String(64), nullable=False)
+    target_id = Column(String(64), nullable=False)
+    protocol = Column(String(32))
+    port = Column(String(64))
+    attributes = Column(JSON, default=dict, nullable=False)
+    project = relationship('Project', back_populates='connections')

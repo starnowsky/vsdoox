@@ -4,9 +4,13 @@ import re
 from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from generator import VisioGenerator, compute_layout
+import storage
+from topology import analyze_interaction
 
-app = Flask(__name__, static_folder='../frontend', static_url_path='')
+app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
 CORS(app)
+
+storage.init_db()
 
 LAYOUTS = {'grid', 'horizontal', 'vertical', 'circle'}
 INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
@@ -85,6 +89,79 @@ def preview():
         return jsonify({'error': str(e)}), 400
     except Exception as e:
         return jsonify({'error': str(e)}), 500
+
+
+# ---------- Проекты и топология (новый flow) ----------
+
+@app.route('/api/projects', methods=['POST'])
+def create_project():
+    try:
+        data = request.get_json(silent=True) or {}
+        owner = data.get('owner') or data.get('owner_name')
+        if not owner:
+            return jsonify({'error': 'Укажите владельца (owner)'}), 400
+        project_id = storage.create_project(data.get('name'), owner)
+        return jsonify({'id': project_id}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/projects', methods=['GET'])
+def projects_list():
+    owner = request.args.get('owner')
+    if not owner:
+        return jsonify({'error': 'Укажите параметр owner'}), 400
+    return jsonify({'projects': storage.list_projects(owner)})
+
+
+@app.route('/api/projects/<int:project_id>', methods=['GET'])
+def project_get(project_id):
+    data = storage.get_project(project_id)
+    if data is None:
+        return jsonify({'error': 'Проект не найден'}), 404
+    return jsonify(data)
+
+
+@app.route('/api/projects/<int:project_id>', methods=['PUT'])
+def project_save(project_id):
+    data = request.get_json(silent=True) or {}
+    name = data.get('name')
+    nodes = data.get('nodes', [])
+    links = data.get('links', [])
+    connections = data.get('connections', [])
+    if not isinstance(nodes, list) or not isinstance(links, list) or not isinstance(connections, list):
+        return jsonify({'error': 'nodes, links и connections должны быть списками'}), 400
+    if not storage.save_project(project_id, name, nodes, links, connections):
+        return jsonify({'error': 'Проект не найден'}), 404
+    return jsonify({'ok': True})
+
+
+@app.route('/api/projects/<int:project_id>', methods=['DELETE'])
+def project_delete(project_id):
+    storage.delete_project(project_id)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/path', methods=['POST'])
+def path_analyze():
+    data = request.get_json(silent=True) or {}
+    nodes = data.get('nodes', [])
+    links = data.get('links', [])
+    source_id = data.get('source_id')
+    target_id = data.get('target_id')
+    if source_id is None or target_id is None:
+        return jsonify({'error': 'source_id и target_id обязательны'}), 400
+    if not isinstance(nodes, list) or not isinstance(links, list):
+        return jsonify({'error': 'nodes и links должны быть списками'}), 400
+    for n in nodes:
+        n['id'] = str(n.get('id'))
+    for l in links:
+        l['source_id'] = str(l.get('source_id'))
+        l['target_id'] = str(l.get('target_id'))
+    result = analyze_interaction(nodes, links, str(source_id), str(target_id))
+    return jsonify(result)
 
 
 if __name__ == '__main__':
