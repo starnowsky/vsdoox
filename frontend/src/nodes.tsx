@@ -46,3 +46,12 @@ export function DeviceNode(props: NodeProps<Node<DeviceData>>) {
     </div>
   );
 }
+
+export function DatacenterNode(props: NodeProps<Node<DeviceData>>) {
+  const name = props.data?.name ?? '';
+  return (
+    <div className="datacenter">
+      <div className="datacenter-header">🏢 ЦОД — {name}</div>
+    </div>
+  );
+}

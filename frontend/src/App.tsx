@@ -1,33 +1,18 @@
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import {
-  ReactFlow,
-  Background,
-  Controls,
-  MiniMap,
-  addEdge,
-  useNodesState,
-  useEdgesState,
-} from '@xyflow/react';
-import type { Connection, Edge, Node, NodeTypes } from '@xyflow/react';
+import { ReactFlow, Background, Controls, MiniMap, useNodesState } from '@xyflow/react';
+import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
-import { DeviceNode } from './nodes';
+import { DatacenterNode, DeviceNode } from './nodes';
 import type { DeviceData } from './nodes';
-import {
-  analyzePath,
-  createProject,
-  deleteProject,
-  getProject,
-  listProjects,
-  saveProject,
-} from './api';
+import { createProject, deleteProject, getProject, listProjects, saveProject } from './api';
 import type { ProjectSummary } from './api';
-import type { Connection as Interaction, GraphLink, GraphNode, NodeType, PathResult, Project } from './types';
+import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from './types';
 
 const nodeTypes: NodeTypes = {
   server: DeviceNode,
   firewall: DeviceNode,
   network: DeviceNode,
-  datacenter: DeviceNode,
+  datacenter: DatacenterNode,
 };
 
 const DEFAULT_NAMES: Record<NodeType, string> = {
@@ -36,8 +21,6 @@ const DEFAULT_NAMES: Record<NodeType, string> = {
   network: 'Сеть',
   datacenter: 'ЦОД',
 };
-
-const NODE_TYPES: NodeType[] = ['server', 'firewall', 'network', 'datacenter'];
 
 interface AttrField {
   key: string;
@@ -50,23 +33,37 @@ const ATTR_FIELDS: Record<NodeType, AttrField[]> = {
     { key: 'ip', label: 'IP-адрес', placeholder: '10.0.0.10' },
     { key: 'ports', label: 'Порты', placeholder: '80, 443' },
   ],
-  firewall: [
-    { key: 'zones', label: 'Зоны/интерфейсы', placeholder: 'outside, inside' },
-  ],
+  firewall: [{ key: 'zones', label: 'Зоны/интерфейсы', placeholder: 'outside, inside' }],
   network: [
     { key: 'cidr', label: 'CIDR', placeholder: '10.0.0.0/24' },
     { key: 'vlan', label: 'VLAN', placeholder: '100' },
   ],
-  datacenter: [
-    { key: 'location', label: 'Расположение', placeholder: 'Москва' },
-  ],
+  datacenter: [{ key: 'location', label: 'Расположение', placeholder: 'Москва' }],
 };
 
-const PARENT_TYPES: Partial<Record<NodeType, NodeType>> = {
-  server: 'network',
-  firewall: 'datacenter',
-  network: 'datacenter',
+const PRIMARY_ATTR: Record<NodeType, AttrField> = {
+  server: ATTR_FIELDS.server[0],
+  firewall: ATTR_FIELDS.firewall[0],
+  network: ATTR_FIELDS.network[0],
+  datacenter: ATTR_FIELDS.datacenter[0],
 };
+
+const PARENT_OPTIONS: Partial<Record<NodeType, NodeType[]>> = {
+  server: ['network', 'datacenter'],
+  firewall: ['datacenter'],
+  network: ['datacenter'],
+};
+
+const CONN_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
+const DEFAULT_CONN_COLOR = CONN_COLORS[0];
+
+const DC_W = 300;
+const DC_HEADER = 46;
+const DC_PAD = 14;
+const ROW_H = 54;
+const ROW_GAP = 8;
+const DC_GAP = 60;
+const DC_MARGIN = 30;
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -75,10 +72,34 @@ function genId(): string {
   return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
+function typeRank(type: string | undefined): number {
+  if (type === 'firewall') return 0;
+  if (type === 'network') return 1;
+  if (type === 'server') return 2;
+  return 3;
+}
+
+function resolveDatacenterId(nodeId: string, nodes: Node<DeviceData>[]): string | undefined {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  let cur = byId.get(nodeId);
+  let guard = 0;
+  while (cur && guard++ < 20) {
+    if (cur.type === 'datacenter') return cur.id;
+    const pid = cur.data.parent_id as string | undefined;
+    cur = pid ? byId.get(pid) : undefined;
+  }
+  return undefined;
+}
+
+function connColor(c: Interaction): string {
+  const col = c.attributes && typeof c.attributes.color === 'string' ? c.attributes.color : '';
+  return col || DEFAULT_CONN_COLOR;
+}
+
 function toGraph(
   nodes: Node<DeviceData>[],
-  edges: Edge[],
-): { nodes: GraphNode[]; links: GraphLink[] } {
+  connections: Interaction[],
+): { nodes: GraphNode[]; links: GraphLink[]; connections: unknown[] } {
   return {
     nodes: nodes.map((n) => ({
       id: n.id,
@@ -89,35 +110,53 @@ function toGraph(
       y: n.position.y,
       attributes: n.data.attributes ?? {},
     })),
-    links: edges.map((e) => ({
-      id: e.id,
-      source_id: e.source,
-      target_id: e.target,
-      label: typeof e.label === 'string' ? e.label : undefined,
-      attributes: {},
+    links: [],
+    connections: connections.map((c) => ({
+      id: c.id,
+      source_id: c.source_id,
+      target_id: c.target_id,
+      protocol: c.protocol ?? null,
+      port: c.port ?? null,
+      attributes: c.attributes ?? {},
     })),
   };
 }
 
-function fromProject(project: Project): { nodes: Node<DeviceData>[]; edges: Edge[] } {
-  const nodes: Node<DeviceData>[] = project.nodes.map((n) => ({
-    id: n.id,
-    type: n.type,
-    position: { x: n.x, y: n.y },
-    data: { name: n.name, parent_id: n.parent_id ?? undefined, attributes: n.attributes },
+function toRfNodes(entities: GraphNode[]): Node<DeviceData>[] {
+  const base: Node<DeviceData>[] = entities.map((e) => ({
+    id: e.id,
+    type: e.type,
+    position: { x: e.x, y: e.y },
+    data: { name: e.name, parent_id: e.parent_id ?? undefined, attributes: e.attributes },
   }));
-  const edges: Edge[] = project.links.map((l) => ({
-    id: l.id,
-    source: l.source_id,
-    target: l.target_id,
-    label: l.label ?? undefined,
-  }));
-  return { nodes, edges };
+  return base.map((n) => {
+    const dcId = n.type === 'datacenter' ? undefined : resolveDatacenterId(n.id, base);
+    return { ...n, parentId: dcId, extent: dcId ? ('parent' as const) : undefined };
+  });
+}
+
+function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
+  const positions = new Map<string, { x: number; y: number }>();
+  let x = DC_MARGIN;
+  for (const dc of nodes.filter((n) => n.type === 'datacenter')) {
+    positions.set(dc.id, { x, y: DC_MARGIN });
+    const children = nodes
+      .filter((n) => n.parentId === dc.id)
+      .sort((a, b) => typeRank(a.type) - typeRank(b.type));
+    children.forEach((c, i) => {
+      positions.set(c.id, { x: DC_PAD, y: DC_HEADER + DC_PAD + i * (ROW_H + ROW_GAP) });
+    });
+    x += DC_W + DC_GAP;
+  }
+  return nodes.map((n) => {
+    const p = positions.get(n.id);
+    return p ? { ...n, position: p } : n;
+  });
 }
 
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DeviceData>>([]);
-  const [edges, setEdges, onEdgesChange] = useEdgesState<Edge>([]);
+  const [connections, setConnections] = useState<Interaction[]>([]);
 
   const [owner, setOwner] = useState<string>(() => localStorage.getItem('vsdoox.owner') ?? '');
   const [projectName, setProjectName] = useState('Схема L2');
@@ -134,41 +173,160 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('vsdoox.theme', theme);
   }, [theme]);
-
   const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
 
-  const [connections, setConnections] = useState<Interaction[]>([]);
-  const [pathResult, setPathResult] = useState<PathResult | null>(null);
+  const [eType, setEType] = useState<NodeType>('server');
+  const [eName, setEName] = useState('');
+  const [eParent, setEParent] = useState('');
+  const [eAttr, setEAttr] = useState('');
 
-  const [connSource, setConnSource] = useState('');
-  const [connTarget, setConnTarget] = useState('');
-  const [connProtocol, setConnProtocol] = useState('tcp');
-  const [connPort, setConnPort] = useState('');
+  const [cSource, setCSource] = useState('');
+  const [cTarget, setCTarget] = useState('');
+  const [cProtocol, setCProtocol] = useState('tcp');
+  const [cPort, setCPort] = useState('');
+  const [cColor, setCColor] = useState(DEFAULT_CONN_COLOR);
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
   const [editParent, setEditParent] = useState('');
   const [editAttrs, setEditAttrs] = useState<Record<string, string>>({});
 
-  const onConnect = useCallback(
-    (conn: Connection) => {
-      const edge: Edge = { ...conn, id: genId() };
-      setEdges((eds) => addEdge(edge, eds));
-    },
-    [setEdges],
-  );
+  const [pathResult, setPathResult] = useState<{ found: boolean; path: string[]; firewalls: string[] } | null>(null);
 
-  const addNode = useCallback(
-    (type: NodeType) => {
-      const node: Node<DeviceData> = {
-        id: genId(),
-        type,
-        position: { x: 80 + Math.random() * 320, y: 80 + Math.random() * 220 },
-        data: { name: DEFAULT_NAMES[type], parent_id: null, attributes: {} },
+  const displayNodes = useMemo(() => {
+    return nodes.map((n) => {
+      if (n.type === 'datacenter') {
+        const childCount = nodes.filter((c) => c.parentId === n.id).length;
+        const h = DC_HEADER + DC_PAD + childCount * (ROW_H + ROW_GAP) + DC_PAD;
+        return { ...n, style: { width: DC_W, height: Math.max(h, 130) } };
+      }
+      return n;
+    });
+  }, [nodes]);
+
+  const edges = useMemo<Edge[]>(() => {
+    const pathNodes = new Set(pathResult?.path ?? []);
+    return connections.map((c) => {
+      const color = connColor(c);
+      const label = (c.protocol ?? 'any') + (c.port ? ':' + c.port : '');
+      const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
+      return {
+        id: 'conn-' + c.id,
+        source: c.source_id,
+        target: c.target_id,
+        type: 'smoothstep',
+        label,
+        style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
+        labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
+        labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
+        labelBgPadding: [5, 3] as [number, number],
+        labelBgBorderRadius: 4,
       };
-      setNodes((nds) => nds.concat(node));
+    });
+  }, [connections, pathResult]);
+
+  const parentOptions = useMemo(() => {
+    const allowed = PARENT_OPTIONS[eType];
+    if (!allowed) return [];
+    return nodes.filter((n) => allowed.includes(n.type as NodeType));
+  }, [eType, nodes]);
+
+  const addEntity = useCallback(() => {
+    const name = eName.trim() || DEFAULT_NAMES[eType];
+    const logicalParent: string | null = eType === 'datacenter' ? null : eParent || null;
+    const dcId = logicalParent ? resolveDatacenterId(logicalParent, nodes) : undefined;
+
+    let parentId: string | undefined;
+    let position: { x: number; y: number };
+    if (eType === 'datacenter') {
+      const count = nodes.filter((n) => n.type === 'datacenter').length;
+      position = { x: DC_MARGIN + count * (DC_W + DC_GAP), y: DC_MARGIN };
+    } else if (dcId) {
+      parentId = dcId;
+      const count = nodes.filter((n) => n.parentId === dcId).length;
+      position = { x: DC_PAD, y: DC_HEADER + DC_PAD + count * (ROW_H + ROW_GAP) };
+    } else {
+      position = { x: DC_MARGIN + Math.random() * 200, y: DC_MARGIN + Math.random() * 200 };
+    }
+
+    const attrs: Record<string, unknown> = {};
+    if (eAttr.trim()) {
+      const key = PRIMARY_ATTR[eType].key;
+      attrs[key] = eAttr.trim();
+    }
+
+    const node: Node<DeviceData> = {
+      id: genId(),
+      type: eType,
+      position,
+      parentId,
+      extent: parentId ? ('parent' as const) : undefined,
+      data: { name, parent_id: logicalParent ?? undefined, attributes: attrs },
+    };
+    setNodes((nds) => nds.concat(node));
+    setEName('');
+    setEAttr('');
+    setEParent('');
+  }, [eType, eName, eParent, eAttr, nodes, setNodes]);
+
+  const deleteNode = useCallback(
+    (id: string) => {
+      setNodes((nds) => nds.filter((n) => n.id !== id && n.data.parent_id !== id));
+      setConnections((cs) => cs.filter((c) => c.source_id !== id && c.target_id !== id));
     },
     [setNodes],
+  );
+
+  const addConnection = useCallback(() => {
+    if (!cSource || !cTarget) {
+      setStatus('Выберите два объекта');
+      return;
+    }
+    if (cSource === cTarget) {
+      setStatus('Выберите разные объекты');
+      return;
+    }
+    const conn: Interaction = {
+      id: genId(),
+      source_id: cSource,
+      target_id: cTarget,
+      protocol: cProtocol || undefined,
+      port: cPort || undefined,
+      attributes: { color: cColor },
+    };
+    setConnections((cs) => cs.concat(conn));
+    setCPort('');
+  }, [cSource, cTarget, cProtocol, cPort, cColor]);
+
+  const deleteConnection = useCallback((id: string) => {
+    setConnections((cs) => cs.filter((c) => c.id !== id));
+  }, []);
+
+  const cycleConnectionColor = useCallback((id: string) => {
+    setConnections((cs) =>
+      cs.map((c) => {
+        if (c.id !== id) return c;
+        const idx = CONN_COLORS.indexOf(connColor(c));
+        const next = CONN_COLORS[(idx + 1) % CONN_COLORS.length];
+        return { ...c, attributes: { ...c.attributes, color: next } };
+      }),
+    );
+  }, []);
+
+  const showConnection = useCallback(
+    (c: Interaction) => {
+      const srcDc = resolveDatacenterId(c.source_id, nodes);
+      const dstDc = resolveDatacenterId(c.target_id, nodes);
+      let firewalls: string[] = [];
+      if (srcDc && dstDc && srcDc !== dstDc) {
+        firewalls = nodes
+          .filter((n) => n.type === 'firewall' && (n.data.parent_id === srcDc || n.data.parent_id === dstDc))
+          .map((n) => n.id);
+      }
+      setPathResult({ found: true, path: [c.source_id, ...firewalls, c.target_id], firewalls });
+      setStatus(firewalls.length ? 'МЭ на пути: ' + firewalls.length : 'В пределах одного ЦОД');
+    },
+    [nodes],
   );
 
   const refreshProjects = useCallback(async () => {
@@ -187,33 +345,26 @@ export default function App() {
       return;
     }
     try {
-      const graph = toGraph(nodes, edges);
+      const graph = toGraph(nodes, connections);
       let pid = projectId;
       if (pid == null) {
         const created = await createProject(projectName || 'Без названия', owner.trim());
         pid = created.id;
         setProjectId(pid);
       }
-      await saveProject(pid, {
-        name: projectName,
-        nodes: graph.nodes,
-        links: graph.links,
-        connections,
-      });
+      await saveProject(pid, { name: projectName, ...graph });
       setStatus('Сохранено (проект #' + pid + ')');
       await refreshProjects();
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [owner, projectName, projectId, nodes, edges, connections, refreshProjects]);
+  }, [owner, projectName, projectId, nodes, connections, refreshProjects]);
 
   const handleLoad = useCallback(
     async (id: number) => {
       try {
         const project = await getProject(id);
-        const { nodes: ns, edges: es } = fromProject(project);
-        setNodes(ns);
-        setEdges(es);
+        setNodes(toRfNodes(project.nodes));
         setConnections(project.connections);
         setProjectId(project.id);
         setProjectName(project.name);
@@ -223,82 +374,48 @@ export default function App() {
         setStatus((e as Error).message);
       }
     },
-    [setNodes, setEdges, setConnections],
+    [setNodes],
   );
 
   const handleNew = useCallback(() => {
     setNodes([]);
-    setEdges([]);
     setConnections([]);
     setProjectId(null);
     setProjectName('Схема L2');
     setPathResult(null);
     setStatus('');
-  }, [setNodes, setEdges, setConnections]);
+  }, [setNodes]);
 
   const handleDelete = useCallback(
     async (id: number) => {
       try {
         await deleteProject(id);
-        if (projectId === id) {
-          setNodes([]);
-          setEdges([]);
-          setConnections([]);
-          setProjectId(null);
-          setProjectName('Схема L2');
-          setPathResult(null);
-        }
+        if (projectId === id) handleNew();
         await refreshProjects();
         setStatus('Проект удалён');
       } catch (e) {
         setStatus((e as Error).message);
       }
     },
-    [projectId, setNodes, setEdges, setConnections, refreshProjects],
+    [projectId, handleNew, refreshProjects],
   );
 
-  const handleAddConnection = useCallback(() => {
-    if (!connSource || !connTarget) {
-      setStatus('Выберите два узла для взаимодействия');
-      return;
-    }
-    if (connSource === connTarget) {
-      setStatus('Выберите разные узлы');
-      return;
-    }
-    const conn: Interaction = {
-      id: genId(),
-      source_id: connSource,
-      target_id: connTarget,
-      protocol: connProtocol || undefined,
-      port: connPort || undefined,
-      attributes: {},
-    };
-    setConnections((cs) => cs.concat(conn));
-    setConnPort('');
-  }, [connSource, connTarget, connProtocol, connPort]);
-
-  const handleShowConnection = useCallback(
-    async (conn: Interaction) => {
-      try {
-        const graph = toGraph(nodes, edges);
-        const res = await analyzePath(graph.nodes, graph.links, conn.source_id, conn.target_id);
-        setPathResult(res);
-        setStatus(
-          res.found
-            ? 'Взаимодействие: ' + res.firewalls.length + ' МЭ на пути'
-            : 'Путь не найден',
-        );
-      } catch (e) {
-        setStatus((e as Error).message);
-      }
+  const openEdit = useCallback(
+    (id: string) => {
+      const node = nodes.find((n) => n.id === id);
+      if (!node) return;
+      setEditingNodeId(id);
+      setEditName(node.data.name);
+      setEditParent((node.data.parent_id as string) ?? '');
+      const attrs: Record<string, string> = {};
+      const a = node.data.attributes ?? {};
+      Object.keys(a).forEach((k) => {
+        attrs[k] = typeof a[k] === 'string' ? a[k] : String(a[k]);
+      });
+      setEditAttrs(attrs);
     },
-    [nodes, edges],
+    [nodes],
   );
-
-  const handleDeleteConnection = useCallback((id: string) => {
-    setConnections((cs) => cs.filter((c) => c.id !== id));
-  }, []);
 
   const handleEditSave = useCallback(() => {
     if (!editingNodeId) return;
@@ -310,7 +427,7 @@ export default function App() {
               data: {
                 ...n.data,
                 name: editName.trim() || n.data.name,
-                parent_id: editParent || null,
+                parent_id: editParent || undefined,
                 attributes: editAttrs,
               },
             }
@@ -320,67 +437,14 @@ export default function App() {
     setEditingNodeId(null);
   }, [editingNodeId, editName, editParent, editAttrs, setNodes]);
 
-  const handleEditCancel = useCallback(() => {
-    setEditingNodeId(null);
-  }, []);
+  const handleEditCancel = useCallback(() => setEditingNodeId(null), []);
 
-  const highlighted = useMemo(() => {
-    const nodeIds = new Set<string>();
-    const edgeIds = new Set<string>();
-    if (pathResult?.found) {
-      pathResult.path.forEach((id) => nodeIds.add(id));
-      for (let i = 0; i < pathResult.path.length - 1; i++) {
-        const a = pathResult.path[i];
-        const b = pathResult.path[i + 1];
-        edges.forEach((e) => {
-          if ((e.source === a && e.target === b) || (e.source === b && e.target === a)) {
-            edgeIds.add(e.id);
-          }
-        });
-      }
-    }
-    return { nodeIds, edgeIds };
-  }, [pathResult, edges]);
-
-  const firewalls = useMemo(() => new Set(pathResult?.firewalls ?? []), [pathResult]);
-
-  const styledNodes = useMemo(
-    () =>
-      nodes.map((n) => {
-        const cls = firewalls.has(n.id)
-          ? 'firewall-node'
-          : highlighted.nodeIds.has(n.id)
-            ? 'path-node'
-            : '';
-        return cls ? { ...n, className: cls } : n;
-      }),
-    [nodes, firewalls, highlighted],
-  );
-
-  const styledEdges = useMemo(
-    () =>
-      edges.map((e) =>
-        highlighted.edgeIds.has(e.id)
-          ? { ...e, style: { stroke: '#f59e0b', strokeWidth: 3 } }
-          : e,
-      ),
-    [edges, highlighted],
-  );
-
-  const ownerChange = (value: string) => {
-    setOwner(value);
-    localStorage.setItem('vsdoox.owner', value);
-  };
+  const nodeName = (id: string): string => nodes.find((n) => n.id === id)?.data.name ?? id;
 
   const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) ?? null : null;
-  const editingType: NodeType | null = editingNode
-    ? ((editingNode.type as NodeType) ?? 'server')
-    : null;
+  const editingType: NodeType | null = editingNode ? ((editingNode.type as NodeType) ?? 'server') : null;
   const editingFields = editingType ? ATTR_FIELDS[editingType] : [];
-  const parentType = editingType ? PARENT_TYPES[editingType] : undefined;
-
-  const nodeName = (id: string): string =>
-    nodes.find((n) => n.id === id)?.data.name ?? id;
+  const editingParentType = editingType ? PARENT_OPTIONS[editingType] : undefined;
 
   return (
     <div className="app">
@@ -390,11 +454,7 @@ export default function App() {
             <span className="logo-mark">V</span>
             vsdoox · сетевые схемы
           </h1>
-          <button
-            className="theme-toggle"
-            onClick={toggleTheme}
-            title={theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}
-          >
+          <button className="theme-toggle" onClick={toggleTheme} title="Переключить тему">
             {theme === 'light' ? '🌙' : '☀️'}
           </button>
         </div>
@@ -403,7 +463,10 @@ export default function App() {
           <label>Владелец</label>
           <input
             value={owner}
-            onChange={(e) => ownerChange(e.target.value)}
+            onChange={(e) => {
+              setOwner(e.target.value);
+              localStorage.setItem('vsdoox.owner', e.target.value);
+            }}
             placeholder="Имя пользователя"
           />
         </section>
@@ -434,19 +497,54 @@ export default function App() {
         </section>
 
         <section>
-          <label>Добавить узел</label>
-          <div className="palette">
-            {NODE_TYPES.map((t) => (
-              <button key={t} onClick={() => addNode(t)}>
-                {DEFAULT_NAMES[t]}
-              </button>
-            ))}
+          <label>Добавить объект</label>
+          <select value={eType} onChange={(e) => setEType(e.target.value as NodeType)}>
+            <option value="server">Сервер</option>
+            <option value="network">Сеть</option>
+            <option value="firewall">МЭ (межсетевой экран)</option>
+            <option value="datacenter">ЦОД</option>
+          </select>
+          <input value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Название" />
+          {parentOptions.length > 0 && (
+            <select value={eParent} onChange={(e) => setEParent(e.target.value)}>
+              <option value="">— родитель —</option>
+              {parentOptions.map((n) => (
+                <option key={n.id} value={n.id}>
+                  {n.data.name}
+                </option>
+              ))}
+            </select>
+          )}
+          <input
+            value={eAttr}
+            onChange={(e) => setEAttr(e.target.value)}
+            placeholder={PRIMARY_ATTR[eType].placeholder}
+          />
+          <div className="row">
+            <button className="primary" onClick={addEntity}>Добавить</button>
+            <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
           </div>
         </section>
 
+        {nodes.length > 0 && (
+          <section>
+            <label>Объекты</label>
+            <ul className="projects">
+              {nodes.map((n) => (
+                <li key={n.id}>
+                  <button className="link" onClick={() => openEdit(n.id)}>
+                    {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
+                  </button>
+                  <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
+                </li>
+              ))}
+            </ul>
+          </section>
+        )}
+
         <section>
-          <label>Взаимодействия (протокол/порт)</label>
-          <select value={connSource} onChange={(e) => setConnSource(e.target.value)}>
+          <label>Связь между объектами</label>
+          <select value={cSource} onChange={(e) => setCSource(e.target.value)}>
             <option value="">— откуда —</option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>
@@ -454,7 +552,7 @@ export default function App() {
               </option>
             ))}
           </select>
-          <select value={connTarget} onChange={(e) => setConnTarget(e.target.value)}>
+          <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
             <option value="">— куда —</option>
             {nodes.map((n) => (
               <option key={n.id} value={n.id}>
@@ -463,52 +561,55 @@ export default function App() {
             ))}
           </select>
           <div className="row">
-            <select value={connProtocol} onChange={(e) => setConnProtocol(e.target.value)}>
+            <select value={cProtocol} onChange={(e) => setCProtocol(e.target.value)}>
               <option value="tcp">TCP</option>
               <option value="udp">UDP</option>
               <option value="icmp">ICMP</option>
               <option value="any">ANY</option>
             </select>
-            <input
-              value={connPort}
-              onChange={(e) => setConnPort(e.target.value)}
-              placeholder="Порт"
-            />
+            <input value={cPort} onChange={(e) => setCPort(e.target.value)} placeholder="Порт" />
           </div>
-          <button className="primary" onClick={handleAddConnection}>
-            Добавить взаимодействие
-          </button>
-          {connections.length > 0 && (
+          <div className="swatches">
+            {CONN_COLORS.map((col) => (
+              <button
+                key={col}
+                className={'swatch' + (cColor === col ? ' active' : '')}
+                style={{ background: col }}
+                onClick={() => setCColor(col)}
+                title={col}
+              />
+            ))}
+          </div>
+          <button className="primary" onClick={addConnection}>Добавить связь</button>
+        </section>
+
+        {connections.length > 0 && (
+          <section>
+            <label>Связи</label>
             <ul className="connections">
               {connections.map((c) => (
                 <li key={c.id}>
-                  <button className="link" onClick={() => handleShowConnection(c)}>
+                  <button className="swatch-mini" style={{ background: connColor(c) }} onClick={() => cycleConnectionColor(c.id)} title="Сменить цвет" />
+                  <button className="link" onClick={() => showConnection(c)}>
                     {nodeName(c.source_id)} → {nodeName(c.target_id)}
                     <span className="conn-meta">
                       {c.protocol ?? 'any'}
                       {c.port ? ':' + c.port : ''}
                     </span>
                   </button>
-                  <button className="del" onClick={() => handleDeleteConnection(c.id)}>✕</button>
+                  <button className="del" onClick={() => deleteConnection(c.id)}>✕</button>
                 </li>
               ))}
             </ul>
-          )}
-        </section>
+          </section>
+        )}
 
         {pathResult && (
           <section className="path-result">
-            {pathResult.found ? (
-              <>
-                <div>МЭ на пути: {pathResult.firewalls.length}</div>
-                <div className="path-chain">
-                  {pathResult.path
-                    .map((id) => nodes.find((n) => n.id === id)?.data.name ?? id)
-                    .join(' → ')}
-                </div>
-              </>
+            {pathResult.firewalls.length > 0 ? (
+              <div>МЭ на пути: {pathResult.firewalls.length}</div>
             ) : (
-              <div>Путь не найден</div>
+              <div>В пределах одного ЦОД</div>
             )}
           </section>
         )}
@@ -518,22 +619,10 @@ export default function App() {
 
       <main className="canvas">
         <ReactFlow
-          nodes={styledNodes}
-          edges={styledEdges}
+          nodes={displayNodes}
+          edges={edges}
           onNodesChange={onNodesChange}
-          onEdgesChange={onEdgesChange}
-          onConnect={onConnect}
-          onNodeDoubleClick={(_event, node) => {
-            setEditingNodeId(node.id);
-            setEditName(node.data.name);
-            setEditParent((node.data.parent_id as string) ?? '');
-            const attrs: Record<string, string> = {};
-            const a = node.data.attributes ?? {};
-            Object.keys(a).forEach((k) => {
-              attrs[k] = typeof a[k] === 'string' ? a[k] : String(a[k]);
-            });
-            setEditAttrs(attrs);
-          }}
+          onNodeDoubleClick={(_event, node) => openEdit(node.id)}
           nodeTypes={nodeTypes}
           fitView
         >
@@ -546,17 +635,17 @@ export default function App() {
       {editingNode && editingType && (
         <div className="modal-backdrop" onClick={handleEditCancel}>
           <div className="modal" onClick={(e) => e.stopPropagation()}>
-            <h2>Свойства узла</h2>
+            <h2>Свойства объекта</h2>
             <label>Название</label>
             <input value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
             <label>Тип: {DEFAULT_NAMES[editingType]}</label>
-            {parentType && (
+            {editingParentType && (
               <>
-                <label>Родитель: {DEFAULT_NAMES[parentType]}</label>
+                <label>Родитель</label>
                 <select value={editParent} onChange={(e) => setEditParent(e.target.value)}>
                   <option value="">— нет —</option>
                   {nodes
-                    .filter((n) => n.type === parentType && n.id !== editingNodeId)
+                    .filter((n) => editingParentType.includes(n.type as NodeType) && n.id !== editingNodeId)
                     .map((n) => (
                       <option key={n.id} value={n.id}>
                         {n.data.name}
