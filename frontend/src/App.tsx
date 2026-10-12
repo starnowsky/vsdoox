@@ -1,4 +1,4 @@
-import { useCallback, useMemo, useState } from 'react';
+import { useCallback, useEffect, useMemo, useState } from 'react';
 import {
   ReactFlow,
   Background,
@@ -124,6 +124,18 @@ export default function App() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState('');
+  const [theme, setTheme] = useState<'light' | 'dark'>(() => {
+    const saved = localStorage.getItem('vsdoox.theme');
+    if (saved === 'light' || saved === 'dark') return saved;
+    return window.matchMedia('(prefers-color-scheme: dark)').matches ? 'dark' : 'light';
+  });
+
+  useEffect(() => {
+    document.documentElement.setAttribute('data-theme', theme);
+    localStorage.setItem('vsdoox.theme', theme);
+  }, [theme]);
+
+  const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
 
   const [connections, setConnections] = useState<Interaction[]>([]);
   const [pathResult, setPathResult] = useState<PathResult | null>(null);
@@ -373,7 +385,19 @@ export default function App() {
   return (
     <div className="app">
       <aside className="sidebar">
-        <h1>vsdoox · сетевые схемы</h1>
+        <div className="sidebar-header">
+          <h1>
+            <span className="logo-mark">V</span>
+            vsdoox · сетевые схемы
+          </h1>
+          <button
+            className="theme-toggle"
+            onClick={toggleTheme}
+            title={theme === 'light' ? 'Тёмная тема' : 'Светлая тема'}
+          >
+            {theme === 'light' ? '🌙' : '☀️'}
+          </button>
+        </div>
 
         <section>
           <label>Владелец</label>
@@ -513,7 +537,7 @@ export default function App() {
           nodeTypes={nodeTypes}
           fitView
         >
-          <Background />
+          <Background color={theme === 'dark' ? '#1e293b' : '#e2e8f0'} />
           <Controls />
           <MiniMap />
         </ReactFlow>
