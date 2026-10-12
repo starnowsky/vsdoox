@@ -32,6 +32,19 @@ SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=Fals
 
 def init_db():
     Base.metadata.create_all(_engine)
+    _migrate_schema()
+
+
+def _migrate_schema():
+    """Лёгкая миграция для существующих dev-БД (до появления Alembic)."""
+    from sqlalchemy import inspect
+    insp = inspect(_engine)
+    if 'nodes' not in insp.get_table_names():
+        return
+    cols = {c['name'] for c in insp.get_columns('nodes')}
+    if 'parent_id' not in cols:
+        with _engine.begin() as conn:
+            conn.exec_driver_sql('ALTER TABLE nodes ADD COLUMN parent_id TEXT')
 
 
 def _ensure_id(value):
@@ -60,7 +73,8 @@ def _iso(value):
 
 def _node_dict(n):
     return {'id': n.id, 'type': n.type, 'name': n.name,
-            'x': n.x, 'y': n.y, 'attributes': n.attributes or {}}
+            'parent_id': n.parent_id, 'x': n.x, 'y': n.y,
+            'attributes': n.attributes or {}}
 
 
 def _link_dict(l):
@@ -153,6 +167,7 @@ def save_project(project_id, name, nodes, links, connections):
             session.add(Node(
                 id=_ensure_id(n.get('id')), project_id=project_id, type=ntype,
                 name=(n.get('name') or '').strip() or 'Узел',
+                parent_id=n.get('parent_id') or None,
                 x=float(n.get('x', 0) or 0), y=float(n.get('y', 0) or 0),
                 attributes=_norm_attributes(n.get('attributes')),
             ))

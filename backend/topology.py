@@ -12,14 +12,27 @@ from collections import deque
 
 
 def build_graph(nodes, links):
-    """Строит неориентированный граф смежности по спискам узлов и линков.
+    """Строит неориентированный граф смежности.
 
-    Возвращает {id: [соседние id, ...]}. Узлы без линков присутствуют
-    в графе с пустым списком соседей.
+    Учитывает два типа рёбер:
+      - вложенность (parent_id): сервер → сеть → ЦОД, МСЭ → ЦОД;
+      - физические линки (links): связи между МСЭ и т.п.
+
+    Возвращает {id: [соседние id, ...]}.
     """
     graph = {}
+    ids = {str(n['id']) for n in nodes}
     for n in nodes:
         graph[str(n['id'])] = []
+
+    # Рёбра вложенности
+    for n in nodes:
+        parent_id = n.get('parent_id')
+        if parent_id and str(parent_id) in ids:
+            graph[str(n['id'])].append(str(parent_id))
+            graph[str(parent_id)].append(str(n['id']))
+
+    # Физические линки
     for link in links:
         s = str(link['source_id'])
         t = str(link['target_id'])

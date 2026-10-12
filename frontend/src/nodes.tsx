@@ -3,6 +3,7 @@ import type { Node, NodeProps } from '@xyflow/react';
 
 export interface DeviceData extends Record<string, unknown> {
   name: string;
+  parent_id?: string | null;
   attributes?: Record<string, unknown>;
 }
 

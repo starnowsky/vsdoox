@@ -37,9 +37,10 @@ class Project(Base):
 class Node(Base):
     __tablename__ = 'nodes'
     id = Column(String(64), primary_key=True)
-    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), nullable=False)
+    project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
     type = Column(String(32), nullable=False)
     name = Column(String(255), nullable=False)
+    parent_id = Column(String(64), nullable=True)
     x = Column(Float, default=0.0, nullable=False)
     y = Column(Float, default=0.0, nullable=False)
     attributes = Column(JSON, default=dict, nullable=False)

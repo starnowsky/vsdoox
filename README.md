@@ -81,7 +81,7 @@ python -m unittest discover -s tests
 | Сеть | `network` | L2/L3-сегмент (VLAN, CIDR) |
 | ЦОД | `datacenter` | территориальное размещение |
 
-- `nodes` — узлы: `{id, type, name, x, y, attributes}`.
+- `nodes` — узлы: `{id, type, name, parent_id, x, y, attributes}`; `parent_id` задаёт вложенность: сервер → сеть → ЦОД, МСЭ → ЦОД.
 - `links` — физические L2-линки: `{id, source_id, target_id, label, attributes}`.
 - `connections` — заданные взаимодействия: `{id, source_id, target_id, protocol, port, attributes}`.
 

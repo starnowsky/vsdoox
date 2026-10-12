@@ -62,6 +62,12 @@ const ATTR_FIELDS: Record<NodeType, AttrField[]> = {
   ],
 };
 
+const PARENT_TYPES: Partial<Record<NodeType, NodeType>> = {
+  server: 'network',
+  firewall: 'datacenter',
+  network: 'datacenter',
+};
+
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
     return crypto.randomUUID();
@@ -78,6 +84,7 @@ function toGraph(
       id: n.id,
       type: (n.type as NodeType) ?? 'server',
       name: n.data.name,
+      parent_id: n.data.parent_id ?? null,
       x: n.position.x,
       y: n.position.y,
       attributes: n.data.attributes ?? {},
@@ -97,7 +104,7 @@ function fromProject(project: Project): { nodes: Node<DeviceData>[]; edges: Edge
     id: n.id,
     type: n.type,
     position: { x: n.x, y: n.y },
-    data: { name: n.name, attributes: n.attributes },
+    data: { name: n.name, parent_id: n.parent_id ?? undefined, attributes: n.attributes },
   }));
   const edges: Edge[] = project.links.map((l) => ({
     id: l.id,
@@ -128,6 +135,7 @@ export default function App() {
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
+  const [editParent, setEditParent] = useState('');
   const [editAttrs, setEditAttrs] = useState<Record<string, string>>({});
 
   const onConnect = useCallback(
@@ -144,7 +152,7 @@ export default function App() {
         id: genId(),
         type,
         position: { x: 80 + Math.random() * 320, y: 80 + Math.random() * 220 },
-        data: { name: DEFAULT_NAMES[type], attributes: {} },
+        data: { name: DEFAULT_NAMES[type], parent_id: null, attributes: {} },
       };
       setNodes((nds) => nds.concat(node));
     },
@@ -290,6 +298,7 @@ export default function App() {
               data: {
                 ...n.data,
                 name: editName.trim() || n.data.name,
+                parent_id: editParent || null,
                 attributes: editAttrs,
               },
             }
@@ -297,7 +306,7 @@ export default function App() {
       ),
     );
     setEditingNodeId(null);
-  }, [editingNodeId, editName, editAttrs, setNodes]);
+  }, [editingNodeId, editName, editParent, editAttrs, setNodes]);
 
   const handleEditCancel = useCallback(() => {
     setEditingNodeId(null);
@@ -356,6 +365,7 @@ export default function App() {
     ? ((editingNode.type as NodeType) ?? 'server')
     : null;
   const editingFields = editingType ? ATTR_FIELDS[editingType] : [];
+  const parentType = editingType ? PARENT_TYPES[editingType] : undefined;
 
   const nodeName = (id: string): string =>
     nodes.find((n) => n.id === id)?.data.name ?? id;
@@ -492,6 +502,7 @@ export default function App() {
           onNodeDoubleClick={(_event, node) => {
             setEditingNodeId(node.id);
             setEditName(node.data.name);
+            setEditParent((node.data.parent_id as string) ?? '');
             const attrs: Record<string, string> = {};
             const a = node.data.attributes ?? {};
             Object.keys(a).forEach((k) => {
@@ -515,6 +526,21 @@ export default function App() {
             <label>Название</label>
             <input value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
             <label>Тип: {DEFAULT_NAMES[editingType]}</label>
+            {parentType && (
+              <>
+                <label>Родитель: {DEFAULT_NAMES[parentType]}</label>
+                <select value={editParent} onChange={(e) => setEditParent(e.target.value)}>
+                  <option value="">— нет —</option>
+                  {nodes
+                    .filter((n) => n.type === parentType && n.id !== editingNodeId)
+                    .map((n) => (
+                      <option key={n.id} value={n.id}>
+                        {n.data.name}
+                      </option>
+                    ))}
+                </select>
+              </>
+            )}
             {editingFields.map((f) => (
               <div key={f.key} style={{ display: 'flex', flexDirection: 'column', gap: 4 }}>
                 <label>{f.label}</label>

@@ -56,6 +56,36 @@ class TopologyTest(unittest.TestCase):
         self.assertFalse(r['found'])
         self.assertEqual(r['path'], [])
 
+    def test_nested_path_through_datacenter_firewalls(self):
+        nodes = [
+            {'id': 'dc1', 'type': 'datacenter', 'name': 'ЦОД1', 'parent_id': None},
+            {'id': 'dc2', 'type': 'datacenter', 'name': 'ЦОД2', 'parent_id': None},
+            {'id': 'fw1', 'type': 'firewall', 'name': 'МЭ1', 'parent_id': 'dc1'},
+            {'id': 'fw2', 'type': 'firewall', 'name': 'МЭ2', 'parent_id': 'dc2'},
+            {'id': 'net1', 'type': 'network', 'name': 'Сеть1', 'parent_id': 'dc1'},
+            {'id': 'net2', 'type': 'network', 'name': 'Сеть2', 'parent_id': 'dc2'},
+            {'id': 'srvA', 'type': 'server', 'name': 'Сервер A', 'parent_id': 'net1'},
+            {'id': 'srvB', 'type': 'server', 'name': 'Сервер B', 'parent_id': 'net2'},
+        ]
+        links = [{'source_id': 'fw1', 'target_id': 'fw2'}]
+        r = analyze_interaction(nodes, links, 'srvA', 'srvB')
+        self.assertTrue(r['found'])
+        self.assertEqual(r['firewalls'], ['fw1', 'fw2'])
+
+    def test_same_datacenter_no_firewall(self):
+        nodes = [
+            {'id': 'dc1', 'type': 'datacenter', 'name': 'ЦОД1', 'parent_id': None},
+            {'id': 'fw1', 'type': 'firewall', 'name': 'МЭ1', 'parent_id': 'dc1'},
+            {'id': 'net1', 'type': 'network', 'name': 'Сеть1', 'parent_id': 'dc1'},
+            {'id': 'net2', 'type': 'network', 'name': 'Сеть2', 'parent_id': 'dc1'},
+            {'id': 'srvA', 'type': 'server', 'name': 'Сервер A', 'parent_id': 'net1'},
+            {'id': 'srvB', 'type': 'server', 'name': 'Сервер B', 'parent_id': 'net2'},
+        ]
+        links = []
+        r = analyze_interaction(nodes, links, 'srvA', 'srvB')
+        self.assertTrue(r['found'])
+        self.assertEqual(r['firewalls'], [])
+
 
 class ProjectApiTest(unittest.TestCase):
     def setUp(self):
@@ -112,6 +142,23 @@ class ProjectApiTest(unittest.TestCase):
         })
         self.assertEqual(r.status_code, 200)
         self.assertEqual(r.get_json()['firewalls'], ['fw1', 'fw2'])
+
+    def test_parent_id_roundtrip(self):
+        r = self.client.post('/api/projects', json={'name': 'P', 'owner': 'alice'})
+        pid = r.get_json()['id']
+        nodes = [
+            {'id': 'dc1', 'type': 'datacenter', 'name': 'ЦОД', 'parent_id': None},
+            {'id': 'net1', 'type': 'network', 'name': 'Сеть', 'parent_id': 'dc1'},
+            {'id': 'srv1', 'type': 'server', 'name': 'Сервер', 'parent_id': 'net1'},
+        ]
+        r = self.client.put(f'/api/projects/{pid}', json={
+            'name': 'P', 'nodes': nodes, 'links': [], 'connections': [],
+        })
+        self.assertEqual(r.status_code, 200)
+        proj = self.client.get(f'/api/projects/{pid}').get_json()
+        by_id = {n['id']: n for n in proj['nodes']}
+        self.assertEqual(by_id['net1']['parent_id'], 'dc1')
+        self.assertEqual(by_id['srv1']['parent_id'], 'net1')
 
 
 class LegacyExportTest(unittest.TestCase):

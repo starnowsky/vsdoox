@@ -4,6 +4,7 @@ export interface GraphNode {
   id: string;
   type: NodeType;
   name: string;
+  parent_id?: string | null;
   x: number;
   y: number;
   attributes: Record<string, unknown>;
