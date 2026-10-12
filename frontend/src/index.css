@@ -352,6 +352,15 @@ button.del:hover { background: var(--surface-2); }
 }
 .react-flow__attribution a { color: var(--text-muted); }
 
+/* связи поверх всех объектов */
+.react-flow__edges {
+  z-index: 10;
+}
+
+.react-flow__nodes {
+  z-index: 5;
+}
+
 /* ---------- Контейнер ЦОД ---------- */
 .datacenter {
   width: 100%;

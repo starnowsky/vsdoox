@@ -62,8 +62,11 @@ const DC_HEADER = 46;
 const DC_PAD = 14;
 const ROW_H = 54;
 const ROW_GAP = 8;
-const DC_GAP = 60;
 const DC_MARGIN = 30;
+const FW_W = 110;
+const FW_GAP = 16;
+const FW_BETWEEN = 48;
+const FW_H = 44;
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -131,23 +134,34 @@ function toRfNodes(entities: GraphNode[]): Node<DeviceData>[] {
   }));
   return base.map((n) => {
     const dcId = n.type === 'datacenter' ? undefined : resolveDatacenterId(n.id, base);
-    return { ...n, parentId: dcId, extent: dcId ? ('parent' as const) : undefined };
+    return { ...n, parentId: dcId, extent: dcId && n.type !== 'firewall' ? ('parent' as const) : undefined };
   });
 }
 
 function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   const positions = new Map<string, { x: number; y: number }>();
-  let x = DC_MARGIN;
-  for (const dc of nodes.filter((n) => n.type === 'datacenter')) {
-    positions.set(dc.id, { x, y: DC_MARGIN });
-    const children = nodes
-      .filter((n) => n.parentId === dc.id)
+  const dcs = nodes.filter((n) => n.type === 'datacenter');
+  let cursor = DC_MARGIN;
+  dcs.forEach((dc, i) => {
+    const inside = nodes
+      .filter((n) => n.parentId === dc.id && n.type !== 'firewall')
       .sort((a, b) => typeRank(a.type) - typeRank(b.type));
-    children.forEach((c, i) => {
-      positions.set(c.id, { x: DC_PAD, y: DC_HEADER + DC_PAD + i * (ROW_H + ROW_GAP) });
+    const fw = nodes.find((n) => n.type === 'firewall' && n.parentId === dc.id);
+    const height = DC_HEADER + DC_PAD + inside.length * (ROW_H + ROW_GAP) + DC_PAD;
+    const side: 'right' | 'left' = i === 0 ? 'right' : 'left';
+    if (side === 'right') {
+      positions.set(dc.id, { x: cursor, y: DC_MARGIN });
+      if (fw) positions.set(fw.id, { x: DC_W + FW_GAP, y: Math.round((height - FW_H) / 2) });
+      cursor += DC_W + FW_GAP + FW_W + FW_BETWEEN;
+    } else {
+      if (fw) positions.set(fw.id, { x: -(FW_W + FW_GAP), y: Math.round((height - FW_H) / 2) });
+      positions.set(dc.id, { x: cursor + FW_W + FW_GAP, y: DC_MARGIN });
+      cursor += FW_W + FW_GAP + DC_W + FW_BETWEEN;
+    }
+    inside.forEach((c, k) => {
+      positions.set(c.id, { x: DC_PAD, y: DC_HEADER + DC_PAD + k * (ROW_H + ROW_GAP) });
     });
-    x += DC_W + DC_GAP;
-  }
+  });
   return nodes.map((n) => {
     const p = positions.get(n.id);
     return p ? { ...n, position: p } : n;
@@ -196,7 +210,7 @@ export default function App() {
   const displayNodes = useMemo(() => {
     return nodes.map((n) => {
       if (n.type === 'datacenter') {
-        const childCount = nodes.filter((c) => c.parentId === n.id).length;
+        const childCount = nodes.filter((c) => c.parentId === n.id && c.type !== 'firewall').length;
         const h = DC_HEADER + DC_PAD + childCount * (ROW_H + ROW_GAP) + DC_PAD;
         return { ...n, style: { width: DC_W, height: Math.max(h, 130) } };
       }
@@ -238,13 +252,9 @@ export default function App() {
 
     let parentId: string | undefined;
     let position: { x: number; y: number };
-    if (eType === 'datacenter') {
-      const count = nodes.filter((n) => n.type === 'datacenter').length;
-      position = { x: DC_MARGIN + count * (DC_W + DC_GAP), y: DC_MARGIN };
-    } else if (dcId) {
+    if (dcId) {
       parentId = dcId;
-      const count = nodes.filter((n) => n.parentId === dcId).length;
-      position = { x: DC_PAD, y: DC_HEADER + DC_PAD + count * (ROW_H + ROW_GAP) };
+      position = { x: DC_PAD, y: DC_HEADER + DC_PAD };
     } else {
       position = { x: DC_MARGIN + Math.random() * 200, y: DC_MARGIN + Math.random() * 200 };
     }
@@ -260,10 +270,10 @@ export default function App() {
       type: eType,
       position,
       parentId,
-      extent: parentId ? ('parent' as const) : undefined,
+      extent: parentId && eType !== 'firewall' ? ('parent' as const) : undefined,
       data: { name, parent_id: logicalParent ?? undefined, attributes: attrs },
     };
-    setNodes((nds) => nds.concat(node));
+    setNodes((nds) => autoLayout(nds.concat(node)));
     setEName('');
     setEAttr('');
     setEParent('');
@@ -271,7 +281,7 @@ export default function App() {
 
   const deleteNode = useCallback(
     (id: string) => {
-      setNodes((nds) => nds.filter((n) => n.id !== id && n.data.parent_id !== id));
+      setNodes((nds) => autoLayout(nds.filter((n) => n.id !== id && n.data.parent_id !== id)));
       setConnections((cs) => cs.filter((c) => c.source_id !== id && c.target_id !== id));
     },
     [setNodes],
