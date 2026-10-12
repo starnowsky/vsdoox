@@ -55,3 +55,16 @@ export function DatacenterNode(props: NodeProps<Node<DeviceData>>) {
     </div>
   );
 }
+
+export function NetworkNode(props: NodeProps<Node<DeviceData>>) {
+  const name = props.data?.name ?? '';
+  const cidr =
+    props.data?.attributes && typeof props.data.attributes.cidr === 'string'
+      ? props.data.attributes.cidr
+      : '';
+  return (
+    <div className="network">
+      <div className="network-header">🌐 {name}{cidr ? ' · ' + cidr : ''}</div>
+    </div>
+  );
+}

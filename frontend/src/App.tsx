@@ -2,7 +2,7 @@ import { useCallback, useEffect, useMemo, useState } from 'react';
 import { ReactFlow, Background, Controls, MiniMap, useNodesState } from '@xyflow/react';
 import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
-import { DatacenterNode, DeviceNode } from './nodes';
+import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
 import { createProject, deleteProject, getProject, listProjects, saveProject } from './api';
 import type { ProjectSummary } from './api';
@@ -11,7 +11,7 @@ import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from '
 const nodeTypes: NodeTypes = {
   server: DeviceNode,
   firewall: DeviceNode,
-  network: DeviceNode,
+  network: NetworkNode,
   datacenter: DatacenterNode,
 };
 
@@ -49,9 +49,9 @@ const PRIMARY_ATTR: Record<NodeType, AttrField> = {
 };
 
 const PARENT_OPTIONS: Partial<Record<NodeType, NodeType[]>> = {
-  server: ['network', 'datacenter'],
+  server: ['network', 'firewall', 'datacenter'],
   firewall: ['datacenter'],
-  network: ['datacenter'],
+  network: ['firewall', 'datacenter'],
 };
 
 const CONN_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
@@ -60,13 +60,15 @@ const DEFAULT_CONN_COLOR = CONN_COLORS[0];
 const DC_W = 300;
 const DC_HEADER = 46;
 const DC_PAD = 14;
-const ROW_H = 54;
-const ROW_GAP = 8;
+const NW_HEADER = 30;
+const NW_PAD = 8;
+const NW_GAP = 10;
+const SRV_H = 48;
+const SRV_GAP = 6;
 const DC_MARGIN = 30;
 const FW_W = 110;
 const FW_GAP = 16;
 const FW_BETWEEN = 48;
-const FW_H = 44;
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -75,23 +77,43 @@ function genId(): string {
   return 'id-' + Math.random().toString(36).slice(2) + Date.now().toString(36);
 }
 
-function typeRank(type: string | undefined): number {
-  if (type === 'firewall') return 0;
-  if (type === 'network') return 1;
-  if (type === 'server') return 2;
-  return 3;
-}
-
-function resolveDatacenterId(nodeId: string, nodes: Node<DeviceData>[]): string | undefined {
+function resolveVisualParentId(nodeId: string, nodes: Node<DeviceData>[]): string | undefined {
   const byId = new Map(nodes.map((n) => [n.id, n]));
   let cur = byId.get(nodeId);
   let guard = 0;
   while (cur && guard++ < 20) {
-    if (cur.type === 'datacenter') return cur.id;
     const pid = cur.data.parent_id as string | undefined;
-    cur = pid ? byId.get(pid) : undefined;
+    const parent = pid ? byId.get(pid) : undefined;
+    if (parent && (parent.type === 'network' || parent.type === 'datacenter')) return parent.id;
+    cur = parent;
   }
   return undefined;
+}
+
+function visualParentFor(logicalParentId: string | null, nodes: Node<DeviceData>[]): string | undefined {
+  if (!logicalParentId) return undefined;
+  const parent = nodes.find((n) => n.id === logicalParentId);
+  if (!parent) return undefined;
+  if (parent.type === 'network' || parent.type === 'datacenter') return parent.id;
+  return resolveVisualParentId(parent.id, nodes);
+}
+
+function collectFirewalls(nodeId: string, nodes: Node<DeviceData>[]): string[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const fws: string[] = [];
+  let cur = byId.get(nodeId);
+  let guard = 0;
+  while (cur && guard++ < 20) {
+    const current = cur;
+    if (current.type === 'firewall') fws.push(current.id);
+    if (current.type === 'datacenter') {
+      const dcFw = nodes.find((n) => n.type === 'firewall' && n.data.parent_id === current.id);
+      if (dcFw) fws.push(dcFw.id);
+    }
+    const pid = current.data.parent_id as string | undefined;
+    cur = pid ? byId.get(pid) : undefined;
+  }
+  return [...new Set(fws)];
 }
 
 function connColor(c: Interaction): string {
@@ -133,34 +155,79 @@ function toRfNodes(entities: GraphNode[]): Node<DeviceData>[] {
     data: { name: e.name, parent_id: e.parent_id ?? undefined, attributes: e.attributes },
   }));
   return base.map((n) => {
-    const dcId = n.type === 'datacenter' ? undefined : resolveDatacenterId(n.id, base);
-    return { ...n, parentId: dcId, extent: dcId && n.type !== 'firewall' ? ('parent' as const) : undefined };
+    const visualParent = resolveVisualParentId(n.id, base);
+    return {
+      ...n,
+      parentId: visualParent,
+      extent: visualParent && n.type !== 'firewall' ? ('parent' as const) : undefined,
+    };
+  });
+}
+
+function computeSizes(nodes: Node<DeviceData>[]): Map<string, { w: number; h: number }> {
+  const sizes = new Map<string, { w: number; h: number }>();
+  nodes.filter((n) => n.type === 'network').forEach((nw) => {
+    const count = nodes.filter((s) => s.parentId === nw.id).length;
+    sizes.set(nw.id, { w: DC_W - 2 * DC_PAD, h: NW_HEADER + NW_PAD + count * (SRV_H + SRV_GAP) + NW_PAD });
+  });
+  nodes.filter((n) => n.type === 'datacenter').forEach((dc) => {
+    const networks = nodes.filter((n) => n.parentId === dc.id && n.type === 'network');
+    const direct = nodes.filter((n) => n.parentId === dc.id && n.type === 'server').length;
+    let h = DC_HEADER + DC_PAD;
+    networks.forEach((nw) => {
+      h += (sizes.get(nw.id)?.h ?? 60) + NW_GAP;
+    });
+    h += direct * (SRV_H + SRV_GAP) + DC_PAD;
+    sizes.set(dc.id, { w: DC_W, h: Math.max(h, 130) });
+  });
+  nodes.filter((n) => n.type === 'firewall').forEach((fw) => {
+    const dc = fw.parentId ? sizes.get(fw.parentId) : undefined;
+    if (dc) sizes.set(fw.id, { w: FW_W, h: dc.h });
+  });
+  return sizes;
+}
+
+function applySizes(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
+  const sizes = computeSizes(nodes);
+  return nodes.map((n) => {
+    const s = sizes.get(n.id);
+    return s ? { ...n, style: { width: s.w, height: s.h } } : n;
   });
 }
 
 function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
+  const sizes = computeSizes(nodes);
   const positions = new Map<string, { x: number; y: number }>();
   const dcs = nodes.filter((n) => n.type === 'datacenter');
   let cursor = DC_MARGIN;
   dcs.forEach((dc, i) => {
-    const inside = nodes
-      .filter((n) => n.parentId === dc.id && n.type !== 'firewall')
-      .sort((a, b) => typeRank(a.type) - typeRank(b.type));
+    const networks = nodes.filter((n) => n.parentId === dc.id && n.type === 'network');
     const fw = nodes.find((n) => n.type === 'firewall' && n.parentId === dc.id);
-    const height = DC_HEADER + DC_PAD + inside.length * (ROW_H + ROW_GAP) + DC_PAD;
+    const directServers = nodes.filter((n) => n.parentId === dc.id && n.type === 'server');
+    let y = DC_HEADER + DC_PAD;
+    for (const nw of networks) {
+      positions.set(nw.id, { x: DC_PAD, y });
+      let sy = NW_HEADER + NW_PAD;
+      for (const srv of nodes.filter((n) => n.parentId === nw.id)) {
+        positions.set(srv.id, { x: NW_PAD, y: sy });
+        sy += SRV_H + SRV_GAP;
+      }
+      y += (sizes.get(nw.id)?.h ?? 60) + NW_GAP;
+    }
+    for (const srv of directServers) {
+      positions.set(srv.id, { x: DC_PAD, y });
+      y += SRV_H + SRV_GAP;
+    }
     const side: 'right' | 'left' = i === 0 ? 'right' : 'left';
     if (side === 'right') {
       positions.set(dc.id, { x: cursor, y: DC_MARGIN });
-      if (fw) positions.set(fw.id, { x: DC_W + FW_GAP, y: Math.round((height - FW_H) / 2) });
+      if (fw) positions.set(fw.id, { x: DC_W + FW_GAP, y: 0 });
       cursor += DC_W + FW_GAP + FW_W + FW_BETWEEN;
     } else {
-      if (fw) positions.set(fw.id, { x: -(FW_W + FW_GAP), y: Math.round((height - FW_H) / 2) });
+      if (fw) positions.set(fw.id, { x: -(FW_W + FW_GAP), y: 0 });
       positions.set(dc.id, { x: cursor + FW_W + FW_GAP, y: DC_MARGIN });
       cursor += FW_W + FW_GAP + DC_W + FW_BETWEEN;
     }
-    inside.forEach((c, k) => {
-      positions.set(c.id, { x: DC_PAD, y: DC_HEADER + DC_PAD + k * (ROW_H + ROW_GAP) });
-    });
   });
   return nodes.map((n) => {
     const p = positions.get(n.id);
@@ -207,20 +274,20 @@ export default function App() {
 
   const [pathResult, setPathResult] = useState<{ found: boolean; path: string[]; firewalls: string[] } | null>(null);
 
-  const displayNodes = useMemo(() => {
-    return nodes.map((n) => {
-      if (n.type === 'datacenter') {
-        const childCount = nodes.filter((c) => c.parentId === n.id && c.type !== 'firewall').length;
-        const h = DC_HEADER + DC_PAD + childCount * (ROW_H + ROW_GAP) + DC_PAD;
-        return { ...n, style: { width: DC_W, height: Math.max(h, 130) } };
-      }
-      return n;
-    });
-  }, [nodes]);
+  const displayNodes = useMemo(() => applySizes(nodes), [nodes]);
 
   const edges = useMemo<Edge[]>(() => {
     const pathNodes = new Set(pathResult?.path ?? []);
+    const groups = new Map<string, Interaction[]>();
+    connections.forEach((c) => {
+      const key = [c.source_id, c.target_id].sort().join('->');
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)!.push(c);
+    });
     return connections.map((c) => {
+      const key = [c.source_id, c.target_id].sort().join('->');
+      const group = groups.get(key) ?? [c];
+      const parallelIndex = group.findIndex((g) => g.id === c.id);
       const color = connColor(c);
       const label = (c.protocol ?? 'any') + (c.port ? ':' + c.port : '');
       const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
@@ -230,12 +297,13 @@ export default function App() {
         target: c.target_id,
         type: 'smoothstep',
         label,
+        pathOptions: { offset: 24 + parallelIndex * 30, borderRadius: 8 },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
         labelBgPadding: [5, 3] as [number, number],
         labelBgBorderRadius: 4,
-      };
+      } as unknown as Edge;
     });
   }, [connections, pathResult]);
 
@@ -248,16 +316,7 @@ export default function App() {
   const addEntity = useCallback(() => {
     const name = eName.trim() || DEFAULT_NAMES[eType];
     const logicalParent: string | null = eType === 'datacenter' ? null : eParent || null;
-    const dcId = logicalParent ? resolveDatacenterId(logicalParent, nodes) : undefined;
-
-    let parentId: string | undefined;
-    let position: { x: number; y: number };
-    if (dcId) {
-      parentId = dcId;
-      position = { x: DC_PAD, y: DC_HEADER + DC_PAD };
-    } else {
-      position = { x: DC_MARGIN + Math.random() * 200, y: DC_MARGIN + Math.random() * 200 };
-    }
+    const visualParent = visualParentFor(logicalParent, nodes);
 
     const attrs: Record<string, unknown> = {};
     if (eAttr.trim()) {
@@ -268,9 +327,9 @@ export default function App() {
     const node: Node<DeviceData> = {
       id: genId(),
       type: eType,
-      position,
-      parentId,
-      extent: parentId && eType !== 'firewall' ? ('parent' as const) : undefined,
+      position: { x: 0, y: 0 },
+      parentId: visualParent,
+      extent: visualParent && eType !== 'firewall' ? ('parent' as const) : undefined,
       data: { name, parent_id: logicalParent ?? undefined, attributes: attrs },
     };
     setNodes((nds) => autoLayout(nds.concat(node)));
@@ -325,14 +384,9 @@ export default function App() {
 
   const showConnection = useCallback(
     (c: Interaction) => {
-      const srcDc = resolveDatacenterId(c.source_id, nodes);
-      const dstDc = resolveDatacenterId(c.target_id, nodes);
-      let firewalls: string[] = [];
-      if (srcDc && dstDc && srcDc !== dstDc) {
-        firewalls = nodes
-          .filter((n) => n.type === 'firewall' && (n.data.parent_id === srcDc || n.data.parent_id === dstDc))
-          .map((n) => n.id);
-      }
+      const firewalls = [
+        ...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)]),
+      ];
       setPathResult({ found: true, path: [c.source_id, ...firewalls, c.target_id], firewalls });
       setStatus(firewalls.length ? 'МЭ на пути: ' + firewalls.length : 'В пределах одного ЦОД');
     },
@@ -430,18 +484,20 @@ export default function App() {
   const handleEditSave = useCallback(() => {
     if (!editingNodeId) return;
     setNodes((nds) =>
-      nds.map((n) =>
-        n.id === editingNodeId
-          ? {
-              ...n,
-              data: {
-                ...n.data,
-                name: editName.trim() || n.data.name,
-                parent_id: editParent || undefined,
-                attributes: editAttrs,
-              },
-            }
-          : n,
+      autoLayout(
+        nds.map((n) =>
+          n.id === editingNodeId
+            ? {
+                ...n,
+                data: {
+                  ...n.data,
+                  name: editName.trim() || n.data.name,
+                  parent_id: editParent || undefined,
+                  attributes: editAttrs,
+                },
+              }
+            : n,
+        ),
       ),
     );
     setEditingNodeId(null);
@@ -520,7 +576,7 @@ export default function App() {
               <option value="">— родитель —</option>
               {parentOptions.map((n) => (
                 <option key={n.id} value={n.id}>
-                  {n.data.name}
+                  {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
                 </option>
               ))}
             </select>
@@ -599,7 +655,12 @@ export default function App() {
             <ul className="connections">
               {connections.map((c) => (
                 <li key={c.id}>
-                  <button className="swatch-mini" style={{ background: connColor(c) }} onClick={() => cycleConnectionColor(c.id)} title="Сменить цвет" />
+                  <button
+                    className="swatch-mini"
+                    style={{ background: connColor(c) }}
+                    onClick={() => cycleConnectionColor(c.id)}
+                    title="Сменить цвет"
+                  />
                   <button className="link" onClick={() => showConnection(c)}>
                     {nodeName(c.source_id)} → {nodeName(c.target_id)}
                     <span className="conn-meta">
@@ -658,7 +719,7 @@ export default function App() {
                     .filter((n) => editingParentType.includes(n.type as NodeType) && n.id !== editingNodeId)
                     .map((n) => (
                       <option key={n.id} value={n.id}>
-                        {n.data.name}
+                        {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
                       </option>
                     ))}
                 </select>
