@@ -17,4 +17,4 @@ WORKDIR /app/backend
 ENV VSDOOX_DB_URL=sqlite:////data/vsdoox.db
 VOLUME /data
 EXPOSE 5000
-CMD ["python", "-c", "from app import app; app.run(host='0.0.0.0', port=5000, debug=False, use_reloader=False)"]
+CMD ["sh", "-c", "gunicorn -w ${GUNICORN_WORKERS:-2} --threads ${GUNICORN_THREADS:-4} --timeout 120 -b 0.0.0.0:${PORT:-5000} app:app"]

@@ -12,6 +12,7 @@ app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
 CORS(app)
 
 storage.init_db()
+admin.init_admin_key_from_env()
 
 LAYOUTS = {'grid', 'horizontal', 'vertical', 'circle'}
 INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')

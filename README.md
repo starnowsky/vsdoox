@@ -102,12 +102,22 @@ python -m unittest discover -s tests
 
 ## Docker (запуск на другом сервере)
 
-Образ собирает фронтенд (Node) и backend (Python) в один контейнер. БД хранится в volume `vsdoox-data`.
+Образ собирает фронтенд (Node) и backend (Python + gunicorn) в один контейнер. БД хранится в volume `vsdoox-data`.
 
 ```bash
+cp .env.example .env   # при необходимости отредактируй порт/ключ
 docker compose up -d --build
 ```
 
-Сервис будет доступен на `http://<server>:5000`. Переменная `VSDOOX_DB_URL` задаёт путь к БД (по умолчанию `sqlite:////data/vsdoox.db` — в volume).
+Сервис доступен на `http://<server>:5000`. Переменные окружения (см. `.env.example`):
 
-Первый запуск: открой `http://<server>:5000`, войди в **admin** (справа вверху), создай ключ, затем создай локального пользователя и войди под ним.
+| Переменная | Описание | По умолчанию |
+|---|---|---|
+| `PORT` | порт сервиса | `5000` |
+| `VSDOOX_DB_URL` | URL БД (SQLite/PostgreSQL) | `sqlite:////data/vsdoox.db` |
+| `VSDOOX_ADMIN_KEY` | ключ админа (создаётся при первом старте, если пусто) | пусто |
+| `GUNICORN_WORKERS` | число worker-процессов | `2` |
+| `GUNICORN_THREADS` | число потоков на worker | `4` |
+
+Первый запуск: открой `http://<server>:5000`, войди в **admin** (справа вверху), создай ключ (или задай `VSDOOX_ADMIN_KEY` в `.env`), затем создай локального пользователя и войди под ним.
+

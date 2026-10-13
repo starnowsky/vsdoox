@@ -37,6 +37,16 @@ def is_configured():
         return bool(row and row.value)
 
 
+def init_admin_key_from_env():
+    """Если задан VSDOOX_ADMIN_KEY и ключ ещё не настроен — создать его."""
+    key = (os.environ.get('VSDOOX_ADMIN_KEY') or '').strip()
+    if not key or is_configured():
+        return
+    with SessionLocal() as s:
+        s.add(Setting(key='admin_key', value=hash_secret(key)))
+        s.commit()
+
+
 def _create_session():
     token = secrets.token_hex(32)
     with SessionLocal() as s:
