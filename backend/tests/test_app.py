@@ -188,5 +188,85 @@ class LegacyExportTest(unittest.TestCase):
         self.assertEqual(r.status_code, 400)
 
 
+class CatalogAccessTest(unittest.TestCase):
+    """Каталог: видимость проектов по группам доступа."""
+
+    def setUp(self):
+        self.client = appmod.app.test_client()
+
+    def _admin_token(self):
+        r = self.client.post('/api/admin/setup', json={'key': 'secret-key'})
+        if r.status_code == 201:
+            return r.get_json()['token']
+        r = self.client.post('/api/admin/login', json={'key': 'secret-key'})
+        return r.get_json()['token']
+
+    def _login(self, username):
+        return self.client.post(
+            '/api/auth/login', json={'username': username, 'password': 'p'}
+        ).get_json()['token']
+
+    def test_group_based_visibility(self):
+        admin_tok = self._admin_token()
+        g1 = self.client.post('/api/admin/groups', json={'name': 'team-a'},
+                              headers={'X-Admin-Token': admin_tok}).get_json()['id']
+        g2 = self.client.post('/api/admin/groups', json={'name': 'team-b'},
+                              headers={'X-Admin-Token': admin_tok}).get_json()['id']
+
+        for u, g in [('u_alice', g1), ('u_bob', g1), ('u_carol', g2)]:
+            self.client.post('/api/admin/users', json={'username': u, 'password': 'p', 'group_id': g},
+                             headers={'X-Admin-Token': admin_tok})
+
+        alice_tok = self._login('u_alice')
+        bob_tok = self._login('u_bob')
+        carol_tok = self._login('u_carol')
+
+        # вход возвращает group_id
+        r = self.client.post('/api/auth/login', json={'username': 'u_alice', 'password': 'p'})
+        self.assertEqual(r.get_json()['group_id'], g1)
+
+        # проект наследует группу владельца
+        pid_alice = self.client.post('/api/projects', json={'name': 'PA', 'owner': 'u_alice'}).get_json()['id']
+        pid_carol = self.client.post('/api/projects', json={'name': 'PC', 'owner': 'u_carol'}).get_json()['id']
+        pa = self.client.get(f'/api/projects/{pid_alice}').get_json()
+        self.assertEqual(pa['group_id'], g1)
+
+        # члены одной группы видят проект, чужая группа — нет
+        alice_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': alice_tok}).get_json()['projects']}
+        bob_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': bob_tok}).get_json()['projects']}
+        carol_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': carol_tok}).get_json()['projects']}
+        self.assertIn(pid_alice, alice_ids)
+        self.assertIn(pid_alice, bob_ids)
+        self.assertNotIn(pid_alice, carol_ids)
+        self.assertIn(pid_carol, carol_ids)
+        self.assertNotIn(pid_carol, alice_ids)
+
+        # админ видит всё
+        admin_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-Admin-Token': admin_tok}).get_json()['projects']}
+        self.assertTrue({pid_alice, pid_carol}.issubset(admin_ids))
+
+    def test_public_project_visible_to_all(self):
+        admin_tok = self._admin_token()
+        pid = self.client.post('/api/projects', json={'name': 'Public', 'owner': 'guest'}).get_json()['id']
+        self.client.post('/api/admin/users', json={'username': 'u_viewer', 'password': 'p', 'group_id': None},
+                         headers={'X-Admin-Token': admin_tok})
+        viewer_tok = self._login('u_viewer')
+        ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': viewer_tok}).get_json()['projects']}
+        self.assertIn(pid, ids)
+
+    def test_reassign_project_group(self):
+        admin_tok = self._admin_token()
+        g1 = self.client.post('/api/admin/groups', json={'name': 'team-x'},
+                              headers={'X-Admin-Token': admin_tok}).get_json()['id']
+        pid = self.client.post('/api/projects', json={'name': 'PX', 'owner': 'u_alice'}).get_json()['id']
+
+        # назначаем группу админом
+        r = self.client.put(f'/api/admin/projects/{pid}/group', json={'group_id': g1},
+                            headers={'X-Admin-Token': admin_tok})
+        self.assertEqual(r.status_code, 200)
+        proj = self.client.get(f'/api/projects/{pid}').get_json()
+        self.assertEqual(proj['group_id'], g1)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -31,6 +31,8 @@ export interface Project {
   id: number;
   name: string;
   owner: string;
+  group_id?: number | null;
+  group_name?: string | null;
   created_at?: string;
   updated_at?: string;
   nodes: GraphNode[];

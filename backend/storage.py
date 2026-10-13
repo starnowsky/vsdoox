@@ -10,7 +10,7 @@ import uuid
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Connection, CustomType, Link, Node, Project, User, utcnow
+from models import Base, Connection, CustomType, Group, Link, LocalUser, Node, Project, User, utcnow
 
 NODE_TYPES = {'server', 'firewall', 'network', 'datacenter'}
 
@@ -45,6 +45,18 @@ def _migrate_schema():
     if 'parent_id' not in cols:
         with _engine.begin() as conn:
             conn.exec_driver_sql('ALTER TABLE nodes ADD COLUMN parent_id TEXT')
+
+    if 'projects' in insp.get_table_names():
+        pcols = {c['name'] for c in insp.get_columns('projects')}
+        if 'group_id' not in pcols:
+            with _engine.begin() as conn:
+                conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN group_id INTEGER')
+
+    if 'admin_sessions' in insp.get_table_names():
+        acols = {c['name'] for c in insp.get_columns('admin_sessions')}
+        if 'username' not in acols:
+            with _engine.begin() as conn:
+                conn.exec_driver_sql('ALTER TABLE admin_sessions ADD COLUMN username TEXT')
 
 
 def _ensure_id(value):
@@ -101,14 +113,40 @@ def get_or_create_user(name):
         return user.id
 
 
-def create_project(name, owner_name):
+def get_user_group_id(username):
+    """Возвращает id группы локального пользователя (или None)."""
+    username = (username or '').strip()
+    if not username:
+        return None
+    with SessionLocal() as session:
+        u = session.execute(
+            select(LocalUser).where(LocalUser.username == username)
+        ).scalar_one_or_none()
+        return u.group_id if u else None
+
+
+def create_project(name, owner_name, group_id=None):
     name = (name or '').strip() or 'Без названия'
     owner_id = get_or_create_user(owner_name)
+    if group_id is None:
+        group_id = get_user_group_id(owner_name)
     with SessionLocal() as session:
-        project = Project(name=name, owner_id=owner_id)
+        project = Project(name=name, owner_id=owner_id, group_id=group_id)
         session.add(project)
         session.commit()
         return project.id
+
+
+def _project_summary(p):
+    return {
+        'id': p.id,
+        'name': p.name,
+        'owner': p.owner.name if p.owner else None,
+        'group_id': p.group_id,
+        'group_name': p.group.name if p.group else None,
+        'created_at': _iso(p.created_at),
+        'updated_at': _iso(p.updated_at),
+    }
 
 
 def list_projects(owner_name):
@@ -118,9 +156,39 @@ def list_projects(owner_name):
             select(Project).where(Project.owner_id == owner_id)
             .order_by(Project.updated_at.desc())
         ).scalars().all()
-        return [{'id': p.id, 'name': p.name,
-                 'created_at': _iso(p.created_at),
-                 'updated_at': _iso(p.updated_at)} for p in rows]
+        return [_project_summary(p) for p in rows]
+
+
+def can_read_project(project, viewer_username, is_admin=False):
+    """Доступ на чтение: админ, владелец, публичный (без группы) или своя группа."""
+    if is_admin:
+        return True
+    owner = project.owner.name if project.owner else None
+    if owner == viewer_username:
+        return True
+    if project.group_id is None:
+        return True
+    return get_user_group_id(viewer_username) == project.group_id
+
+
+def list_visible_projects(viewer_username, is_admin=False):
+    """Все проекты, доступные пользователю: публичные, своей группы и собственные."""
+    with SessionLocal() as session:
+        if is_admin:
+            rows = session.execute(
+                select(Project).order_by(Project.updated_at.desc())
+            ).scalars().all()
+            return [_project_summary(p) for p in rows]
+        group_id = get_user_group_id(viewer_username)
+        rows = session.execute(
+            select(Project).order_by(Project.updated_at.desc())
+        ).scalars().all()
+        result = []
+        for p in rows:
+            owner = p.owner.name if p.owner else None
+            if owner == viewer_username or p.group_id is None or p.group_id == group_id:
+                result.append(_project_summary(p))
+        return result
 
 
 def get_project(project_id):
@@ -140,6 +208,8 @@ def get_project(project_id):
         return {
             'id': project.id, 'name': project.name,
             'owner': project.owner.name if project.owner else None,
+            'group_id': project.group_id,
+            'group_name': project.group.name if project.group else None,
             'created_at': _iso(project.created_at),
             'updated_at': _iso(project.updated_at),
             'nodes': [_node_dict(n) for n in nodes],
@@ -193,6 +263,18 @@ def delete_project(project_id):
         session.execute(delete(Node).where(Node.project_id == project_id))
         session.execute(delete(Project).where(Project.id == project_id))
         session.commit()
+
+
+def set_project_group(project_id, group_id):
+    """Назначает/снимает группу доступа проекта (None = публичный)."""
+    with SessionLocal() as session:
+        project = session.get(Project, project_id)
+        if not project:
+            return False
+        project.group_id = group_id
+        project.updated_at = utcnow()
+        session.commit()
+        return True
 
 
 # --- Кастомные типы объектов ---

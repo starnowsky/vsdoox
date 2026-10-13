@@ -12,7 +12,10 @@ import {
   deleteCustomType,
   deleteProject,
   exportVSDX,
+  getCatalogProject,
   getProject,
+  keycloakConfig,
+  keycloakLoginUrl,
   listCustomTypes,
   listProjects,
   saveProject,
@@ -313,6 +316,8 @@ export default function App() {
   const [owner, setOwner] = useState<string>(() => localStorage.getItem('vsdoox.owner') ?? '');
   const [projectName, setProjectName] = useState('Схема L2');
   const [projectId, setProjectId] = useState<number | null>(null);
+  const [projectOwner, setProjectOwner] = useState<string | null>(null);
+  const [kcEnabled, setKcEnabled] = useState(false);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState('');
   const [tab, setTab] = useState<Tab>('manage');
@@ -335,6 +340,41 @@ export default function App() {
       .then((r) => setCustomTypes(r.types))
       .catch(() => {});
   }, []);
+
+  // Keycloak-callback (?kc_token=...&kc_user=...) и открытие проекта из каталога (?project=...).
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const kcToken = params.get('kc_token');
+    const kcUser = params.get('kc_user');
+    const projParam = params.get('project');
+
+    if (kcToken && kcUser) {
+      localStorage.setItem('vsdoox.user.token', kcToken);
+      localStorage.setItem('vsdoox.user.name', kcUser);
+      localStorage.setItem('vsdoox.owner', kcUser);
+      setUserToken(kcToken);
+      setOwner(kcUser);
+      window.history.replaceState({}, '', '/');
+    }
+
+    if (projParam) {
+      getCatalogProject(Number(projParam))
+        .then((project) => {
+          setNodes(toRfNodes(project.nodes));
+          setConnections(project.connections);
+          setProjectId(project.id);
+          setProjectName(project.name);
+          setProjectOwner(project.owner);
+          setPathResult(null);
+        })
+        .catch(() => {});
+      window.history.replaceState({}, '', '/');
+    }
+
+    keycloakConfig()
+      .then((c) => setKcEnabled(c.enabled))
+      .catch(() => setKcEnabled(false));
+  }, [setNodes]);
 
   const [eType, setEType] = useState<string>('server');
   const [eName, setEName] = useState('');
@@ -441,6 +481,10 @@ export default function App() {
     } catch (e) {
       setLoginError((e as Error).message);
     }
+  };
+
+  const handleKeycloakLogin = () => {
+    window.location.href = keycloakLoginUrl();
   };
 
   const handleLogout = () => {
@@ -568,10 +612,16 @@ export default function App() {
     try {
       const graph = toGraph(nodes, connections);
       let pid = projectId;
+      // Если открыт чужой проект — сохраняем как копию в своём пространстве.
+      if (pid != null && projectOwner != null && projectOwner !== owner.trim()) {
+        pid = null;
+        setProjectId(null);
+      }
       if (pid == null) {
         const created = await createProject(projectName || 'Без названия', owner.trim());
         pid = created.id;
         setProjectId(pid);
+        setProjectOwner(owner.trim());
       }
       await saveProject(pid, { name: projectName, ...graph });
       setStatus('Сохранено (проект #' + pid + ')');
@@ -579,7 +629,7 @@ export default function App() {
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [owner, projectName, projectId, nodes, connections, refreshProjects]);
+  }, [owner, projectName, projectId, projectOwner, nodes, connections, refreshProjects]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -633,6 +683,7 @@ export default function App() {
         setConnections(project.connections);
         setProjectId(project.id);
         setProjectName(project.name);
+        setProjectOwner(project.owner);
         setPathResult(null);
         setStatus('Загружен проект #' + id);
       } catch (e) {
@@ -646,6 +697,7 @@ export default function App() {
     setNodes([]);
     setConnections([]);
     setProjectId(null);
+    setProjectOwner(null);
     setProjectName('Схема L2');
     setPathResult(null);
     setStatus('');
@@ -724,6 +776,9 @@ export default function App() {
           <input value={loginUser} onChange={(e) => setLoginUser(e.target.value)} placeholder="Логин" autoFocus />
           <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} placeholder="Пароль" />
           <button className="primary" onClick={handleLogin}>Войти</button>
+          {kcEnabled && (
+            <button onClick={handleKeycloakLogin}>Войти через Keycloak</button>
+          )}
           {loginError && <div className="error">{loginError}</div>}
         </div>
       </div>
@@ -732,7 +787,10 @@ export default function App() {
 
   return (
     <div className="app">
-      <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
+      <div className="top-actions">
+        <button className="admin-btn" onClick={() => window.open('/catalog', '_blank')} title="Каталог проектов">каталог</button>
+        <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
+      </div>
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>
@@ -756,7 +814,9 @@ export default function App() {
 
             <div className="row">
               <button onClick={handleNew}>Новая</button>
-              <button className="primary" onClick={handleSave}>Сохранить</button>
+              <button className="primary" onClick={handleSave}>
+                {projectOwner != null && projectOwner !== owner ? 'Сохранить копию' : 'Сохранить'}
+              </button>
             </div>
             <button onClick={handleExport}>Скачать .vsdx</button>
 

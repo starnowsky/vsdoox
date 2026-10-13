@@ -26,9 +26,11 @@ class Project(Base):
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
+    group_id = Column(Integer, ForeignKey('groups.id', ondelete='SET NULL'), nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
     updated_at = Column(DateTime, default=utcnow, onupdate=utcnow, nullable=False)
     owner = relationship('User', back_populates='projects')
+    group = relationship('Group')
     nodes = relationship('Node', back_populates='project', cascade='all, delete-orphan')
     links = relationship('Link', back_populates='project', cascade='all, delete-orphan')
     connections = relationship('Connection', back_populates='project', cascade='all, delete-orphan')
@@ -79,6 +81,7 @@ class Setting(Base):
 class AdminSession(Base):
     __tablename__ = 'admin_sessions'
     token = Column(String(64), primary_key=True)
+    username = Column(String(120), nullable=True)
     created_at = Column(DateTime, default=utcnow, nullable=False)
 
 

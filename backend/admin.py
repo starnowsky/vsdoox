@@ -47,12 +47,41 @@ def init_admin_key_from_env():
         s.commit()
 
 
-def _create_session():
+def _create_session(username=None):
     token = secrets.token_hex(32)
     with SessionLocal() as s:
-        s.add(AdminSession(token=token))
+        s.add(AdminSession(token=token, username=username))
         s.commit()
     return token
+
+
+def start_session(username=None):
+    """Создаёт сессию: admin при username=None, иначе пользовательскую."""
+    return _create_session(username)
+
+
+def resolve_token(token):
+    """Возвращает (username, is_admin) для токена или None.
+
+    Админские сессии создаются с username=None; пользовательские — с логином.
+    """
+    if not token:
+        return None
+    with SessionLocal() as s:
+        row = s.get(AdminSession, token)
+        if not row:
+            return None
+        return (row.username, row.username is None)
+
+
+def get_user_group(username):
+    """id группы локального пользователя (или None)."""
+    username = (username or '').strip()
+    if not username:
+        return None
+    with SessionLocal() as s:
+        u = s.execute(select(LocalUser).where(LocalUser.username == username)).scalar_one_or_none()
+        return u.group_id if u else None
 
 
 def setup_key(key):
@@ -182,4 +211,4 @@ def user_login(username, password):
         u = s.execute(select(LocalUser).where(LocalUser.username == username)).scalar_one_or_none()
         if not u or not verify_secret(password, u.password_hash):
             return None
-    return _create_session()
+    return _create_session(username)

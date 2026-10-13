@@ -6,13 +6,15 @@ import {
   adminDeleteUser,
   adminGetKeycloak,
   adminListGroups,
+  adminListProjects,
   adminListUsers,
   adminLogin,
   adminSaveKeycloak,
+  adminSetProjectGroup,
   adminSetup,
   adminStatus,
 } from './api';
-import type { AdminUser } from './api';
+import type { AdminUser, CatalogProject } from './api';
 
 const TOKEN_KEY = 'vsdoox.admin.token';
 
@@ -37,6 +39,7 @@ export default function AdminPanel() {
   const [kc, setKc] = useState<KeycloakConfig>(EMPTY_KC);
   const [groups, setGroups] = useState<Array<{ id: number; name: string }>>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
+  const [allProjects, setAllProjects] = useState<CatalogProject[]>([]);
 
   const [newGroup, setNewGroup] = useState('');
   const [newUser, setNewUser] = useState('');
@@ -51,14 +54,16 @@ export default function AdminPanel() {
 
   const loadAdmin = useCallback(async (tok: string) => {
     try {
-      const [kcRes, groupsRes, usersRes] = await Promise.all([
+      const [kcRes, groupsRes, usersRes, projectsRes] = await Promise.all([
         adminGetKeycloak(tok),
         adminListGroups(tok),
         adminListUsers(tok),
+        adminListProjects(tok),
       ]);
       setKc({ ...EMPTY_KC, ...kcRes } as KeycloakConfig);
       setGroups(groupsRes.groups);
       setUsers(usersRes.users);
+      setAllProjects(projectsRes.projects);
     } catch (e) {
       setError((e as Error).message);
     }
@@ -154,6 +159,17 @@ export default function AdminPanel() {
     try {
       await adminDeleteUser(token, id);
       setUsers((await adminListUsers(token)).users);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleChangeProjectGroup = async (pid: number, groupId: number | null) => {
+    setError('');
+    try {
+      await adminSetProjectGroup(token, pid, groupId);
+      setAllProjects((await adminListProjects(token)).projects);
+      setStatus('Группа проекта обновлена');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -274,6 +290,31 @@ export default function AdminPanel() {
             <li key={u.id}>
               <span>{u.username} <span className="muted">({groupName(u.group_id)})</span></span>
               <button className="del" onClick={() => handleDeleteUser(u.id)}>✕</button>
+            </li>
+          ))}
+        </ul>
+      </section>
+
+      <section className="admin-section">
+        <h2>Проекты (группы доступа)</h2>
+        <ul className="admin-list">
+          {allProjects.map((p) => (
+            <li key={p.id}>
+              <span className="catalog-item">
+                <span className="catalog-name">{p.name}</span>
+                <span className="catalog-meta muted">владелец: {p.owner ?? '—'}</span>
+              </span>
+              <select
+                value={p.group_id ?? ''}
+                onChange={(e) =>
+                  handleChangeProjectGroup(p.id, e.target.value === '' ? null : Number(e.target.value))
+                }
+              >
+                <option value="">публичный</option>
+                {groups.map((g) => (
+                  <option key={g.id} value={g.id}>{g.name}</option>
+                ))}
+              </select>
             </li>
           ))}
         </ul>

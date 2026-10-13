@@ -504,11 +504,16 @@ button.del:hover { background: var(--surface-2); }
 }
 
 /* ---------- Админка ---------- */
-.admin-btn {
+.top-actions {
   position: fixed;
   top: 14px;
   right: 14px;
   z-index: 20;
+  display: flex;
+  gap: 8px;
+}
+
+.admin-btn {
   padding: 7px 14px;
   border: 1px solid var(--border);
   background: var(--surface);
@@ -724,3 +729,24 @@ button.del:hover { background: var(--surface-2); }
 }
 .login-card button:hover { background: var(--accent-hover); }
 .login-card .muted { color: var(--text-muted); font-size: 13px; }
+
+/* каталог проектов */
+.catalog-item {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  min-width: 0;
+}
+.catalog-name {
+  font-weight: 600;
+  font-size: 14px;
+  color: var(--text);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.catalog-meta {
+  font-size: 12px;
+  color: var(--text);
+}
+.catalog-meta.muted { color: var(--text-muted); }

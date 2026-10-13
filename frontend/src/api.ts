@@ -3,13 +3,19 @@ import type { GraphLink, GraphNode, PathResult, Project } from './types';
 export interface ProjectSummary {
   id: number;
   name: string;
+  owner?: string | null;
+  group_id?: number | null;
+  group_name?: string | null;
   created_at?: string;
   updated_at?: string;
 }
 
 async function request<T>(url: string, options?: RequestInit): Promise<T> {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' };
+  const token = localStorage.getItem('vsdoox.user.token');
+  if (token) headers['X-User-Token'] = token;
   const res = await fetch(url, {
-    headers: { 'Content-Type': 'application/json' },
+    headers,
     ...options,
   });
   if (!res.ok) {
@@ -52,6 +58,26 @@ export function saveProject(
 
 export function deleteProject(id: number): Promise<{ ok: boolean }> {
   return request('/api/projects/' + id, { method: 'DELETE' });
+}
+
+// --- Каталог (проекты всех пользователей по группам доступа) ---
+
+export interface CatalogProject {
+  id: number;
+  name: string;
+  owner: string | null;
+  group_id: number | null;
+  group_name: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export function catalogProjects(): Promise<{ projects: CatalogProject[]; viewer: string; is_admin: boolean }> {
+  return request('/api/catalog');
+}
+
+export function getCatalogProject(id: number): Promise<Project> {
+  return request('/api/catalog/' + id);
 }
 
 export function analyzePath(
@@ -171,6 +197,17 @@ export function adminDeleteUser(token: string, id: number): Promise<{ ok: boolea
   return adminRequest('/api/admin/users/' + id, token, { method: 'DELETE' });
 }
 
+export function adminListProjects(token: string): Promise<{ projects: CatalogProject[] }> {
+  return adminRequest('/api/admin/projects', token);
+}
+
+export function adminSetProjectGroup(token: string, id: number, groupId: number | null): Promise<{ ok: boolean }> {
+  return adminRequest('/api/admin/projects/' + id + '/group', token, {
+    method: 'PUT',
+    body: JSON.stringify({ group_id: groupId }),
+  });
+}
+
 // --- Кастомные типы объектов ---
 
 export interface CustomType {
@@ -194,4 +231,21 @@ export function deleteCustomType(id: number): Promise<{ ok: boolean }> {
 
 export function authLogin(username: string, password: string): Promise<{ token: string; username: string }> {
   return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+}
+
+// --- Keycloak ---
+
+export interface KeycloakPublicConfig {
+  enabled: boolean;
+  url: string;
+  realm: string;
+  client_id: string;
+}
+
+export function keycloakConfig(): Promise<KeycloakPublicConfig> {
+  return request('/api/auth/keycloak/config');
+}
+
+export function keycloakLoginUrl(): string {
+  return '/api/auth/keycloak/login';
 }

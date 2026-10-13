@@ -1,11 +1,13 @@
 import io
 import re
+import urllib.parse
 
-from flask import Flask, request, jsonify, send_file
+from flask import Flask, request, jsonify, send_file, redirect
 from flask_cors import CORS
 from generator import VisioGenerator, compute_layout
 import storage
 import admin
+import keycloak
 from topology import analyze_interaction
 
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
@@ -102,7 +104,7 @@ def create_project():
         owner = data.get('owner') or data.get('owner_name')
         if not owner:
             return jsonify({'error': 'Укажите владельца (owner)'}), 400
-        project_id = storage.create_project(data.get('name'), owner)
+        project_id = storage.create_project(data.get('name'), owner, data.get('group_id'))
         return jsonify({'id': project_id}), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -143,6 +145,75 @@ def project_save(project_id):
 @app.route('/api/projects/<int:project_id>', methods=['DELETE'])
 def project_delete(project_id):
     storage.delete_project(project_id)
+    return jsonify({'ok': True})
+
+
+# ---------- Каталог проектов (группы доступа) ----------
+
+def _current_identity():
+    """Определяет текущего пользователя по X-User-Token / X-Admin-Token.
+
+    Возвращает (username, is_admin) или None.
+    """
+    token = request.headers.get('X-User-Token') or request.headers.get('X-Admin-Token')
+    if not token:
+        return None
+    return admin.resolve_token(token)
+
+
+def _can_view(project, username, is_admin):
+    if is_admin:
+        return True
+    if project.get('owner') == username:
+        return True
+    if project.get('group_id') is None:
+        return True
+    return storage.get_user_group_id(username) == project.get('group_id')
+
+
+@app.route('/api/catalog', methods=['GET'])
+def catalog_list():
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, is_admin = ident
+    projects = storage.list_visible_projects(username, is_admin)
+    return jsonify({'projects': projects, 'viewer': username, 'is_admin': is_admin})
+
+
+@app.route('/api/catalog/<int:project_id>', methods=['GET'])
+def catalog_get(project_id):
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, is_admin = ident
+    project = storage.get_project(project_id)
+    if project is None:
+        return jsonify({'error': 'Проект не найден'}), 404
+    if not _can_view(project, username, is_admin):
+        return jsonify({'error': 'Нет доступа к проекту'}), 403
+    return jsonify(project)
+
+
+@app.route('/api/admin/projects', methods=['GET'])
+def admin_projects_list():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify({'projects': storage.list_visible_projects(None, is_admin=True)})
+
+
+@app.route('/api/admin/projects/<int:pid>/group', methods=['PUT'])
+def admin_project_group(pid):
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    gid = data.get('group_id')
+    if gid in ('', 0):
+        gid = None
+    if not storage.set_project_group(pid, gid):
+        return jsonify({'error': 'Проект не найден'}), 404
     return jsonify({'ok': True})
 
 
@@ -204,6 +275,11 @@ def _require_admin():
 
 @app.route('/admin')
 def admin_page():
+    return app.send_static_file('index.html')
+
+
+@app.route('/catalog')
+def catalog_page():
     return app.send_static_file('index.html')
 
 
@@ -331,7 +407,49 @@ def custom_types_delete(tid):
     return jsonify({'ok': True})
 
 
-# ---------- Авторизация (логин/пароль) ----------
+# ---------- Авторизация (логин/пароль + Keycloak) ----------
+
+@app.route('/api/auth/keycloak/config', methods=['GET'])
+def keycloak_config():
+    return jsonify(keycloak.public_config())
+
+
+@app.route('/api/auth/keycloak/login')
+def keycloak_login():
+    if not keycloak.is_enabled():
+        return jsonify({'error': 'Keycloak не настроен'}), 400
+    state = keycloak.new_state()
+    redirect_uri = request.host_url.rstrip('/') + '/api/auth/keycloak/callback'
+    resp = redirect(keycloak.auth_url(redirect_uri, state))
+    resp.set_cookie('vsdoox_oauth_state', state, httponly=True, samesite='Lax', max_age=600)
+    return resp
+
+
+@app.route('/api/auth/keycloak/callback')
+def keycloak_callback():
+    code = request.args.get('code')
+    state = request.args.get('state')
+    if not code:
+        return jsonify({'error': 'Нет кода авторизации'}), 400
+    if not state or state != request.cookies.get('vsdoox_oauth_state'):
+        return jsonify({'error': 'Неверный state'}), 400
+    redirect_uri = request.host_url.rstrip('/') + '/api/auth/keycloak/callback'
+    try:
+        tokens = keycloak.exchange_code(code, redirect_uri)
+        access_token = tokens.get('access_token')
+        if not access_token:
+            raise keycloak.KeycloakError('В ответе Keycloak нет access_token')
+        userinfo = keycloak.fetch_userinfo(access_token)
+        username, _group = keycloak.sync_user(userinfo)
+        token = admin.start_session(username)
+    except keycloak.KeycloakError as e:
+        return jsonify({'error': str(e)}), 400
+
+    frontend_url = '/?kc_token=' + urllib.parse.quote(token) + '&kc_user=' + urllib.parse.quote(username)
+    resp = redirect(frontend_url)
+    resp.delete_cookie('vsdoox_oauth_state')
+    return resp
+
 
 @app.route('/api/auth/login', methods=['POST'])
 def auth_login():
@@ -340,7 +458,7 @@ def auth_login():
     token = admin.user_login(username, data.get('password'))
     if not token:
         return jsonify({'error': 'Неверный логин или пароль'}), 401
-    return jsonify({'token': token, 'username': username})
+    return jsonify({'token': token, 'username': username, 'group_id': admin.get_user_group(username)})
 
 
 if __name__ == '__main__':
