@@ -26,16 +26,10 @@ function subtitleFor(
   attrs: Record<string, unknown> | undefined,
 ): string {
   if (!attrs) return '';
-  switch (type) {
-    case 'server':
-      return typeof attrs.ip === 'string' ? attrs.ip : '';
-    case 'network':
-      return typeof attrs.cidr === 'string' ? attrs.cidr : '';
-    case 'datacenter':
-      return typeof attrs.location === 'string' ? attrs.location : '';
-    default:
-      return '';
-  }
+  if (type === 'network') return typeof attrs.cidr === 'string' ? attrs.cidr : '';
+  if (type === 'datacenter') return typeof attrs.location === 'string' ? attrs.location : '';
+  if (typeof attrs.ip === 'string') return attrs.ip;
+  return '';
 }
 
 function NodeHandles() {

@@ -65,8 +65,8 @@ const PARENT_OPTIONS: Partial<Record<NodeType, NodeType[]>> = {
   network: ['firewall', 'datacenter'],
 };
 
-function primaryAttrFor(type: string): AttrField | undefined {
-  return PRIMARY_ATTR[type as NodeType];
+function primaryAttrFor(type: string): AttrField {
+  return PRIMARY_ATTR[type as NodeType] ?? { key: 'ip', label: 'IP-адрес', placeholder: '10.0.0.10' };
 }
 
 function parentOptionsFor(type: string): NodeType[] | undefined {
@@ -385,7 +385,7 @@ export default function App() {
         targetHandle: 't-' + closestSide(tc, sc),
         type: 'smoothstep',
         label,
-        pathOptions: { offset: 24 + parallelIndex * 30, borderRadius: 8 },
+        pathOptions: { offset: 30 + parallelIndex * 40, borderRadius: 8 },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
@@ -681,7 +681,9 @@ export default function App() {
 
   const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) ?? null : null;
   const editingType: string | null = editingNode ? editingNode.type ?? 'server' : null;
-  const editingFields = editingType ? ATTR_FIELDS[editingType as NodeType] ?? [] : [];
+  const editingFields = editingType
+    ? ATTR_FIELDS[editingType as NodeType] ?? [{ key: 'ip', label: 'IP-адрес', placeholder: '10.0.0.10' }]
+    : [];
   const editingParentType = editingType ? parentOptionsFor(editingType) : undefined;
 
   if (!userToken) {
