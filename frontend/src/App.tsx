@@ -57,18 +57,20 @@ const PARENT_OPTIONS: Partial<Record<NodeType, NodeType[]>> = {
 const CONN_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
 const DEFAULT_CONN_COLOR = CONN_COLORS[0];
 
-const DC_W = 300;
+const DC_W = 340;
 const DC_HEADER = 46;
 const DC_PAD = 14;
 const NW_HEADER = 30;
 const NW_PAD = 8;
 const NW_GAP = 10;
-const SRV_H = 48;
-const SRV_GAP = 6;
+const SRV_W = 140;
+const SRV_H = 72;
+const SRV_GAP = 8;
 const DC_MARGIN = 30;
 const FW_W = 110;
 const FW_GAP = 16;
 const FW_BETWEEN = 48;
+const SRV_COLUMNS = Math.max(1, Math.floor(((DC_W - 2 * DC_PAD - 2 * NW_PAD) + SRV_GAP) / (SRV_W + SRV_GAP)));
 
 function genId(): string {
   if (typeof crypto !== 'undefined' && typeof crypto.randomUUID === 'function') {
@@ -168,21 +170,26 @@ function computeSizes(nodes: Node<DeviceData>[]): Map<string, { w: number; h: nu
   const sizes = new Map<string, { w: number; h: number }>();
   nodes.filter((n) => n.type === 'network').forEach((nw) => {
     const count = nodes.filter((s) => s.parentId === nw.id).length;
-    sizes.set(nw.id, { w: DC_W - 2 * DC_PAD, h: NW_HEADER + NW_PAD + count * (SRV_H + SRV_GAP) + NW_PAD });
+    const rows = Math.max(1, Math.ceil(count / SRV_COLUMNS));
+    sizes.set(nw.id, { w: DC_W - 2 * DC_PAD, h: NW_HEADER + NW_PAD + rows * (SRV_H + SRV_GAP) + NW_PAD });
   });
   nodes.filter((n) => n.type === 'datacenter').forEach((dc) => {
     const networks = nodes.filter((n) => n.parentId === dc.id && n.type === 'network');
     const direct = nodes.filter((n) => n.parentId === dc.id && n.type === 'server').length;
+    const directRows = Math.max(1, Math.ceil(direct / SRV_COLUMNS));
     let h = DC_HEADER + DC_PAD;
     networks.forEach((nw) => {
       h += (sizes.get(nw.id)?.h ?? 60) + NW_GAP;
     });
-    h += direct * (SRV_H + SRV_GAP) + DC_PAD;
+    h += directRows * (SRV_H + SRV_GAP) + DC_PAD;
     sizes.set(dc.id, { w: DC_W, h: Math.max(h, 130) });
   });
   nodes.filter((n) => n.type === 'firewall').forEach((fw) => {
     const dc = fw.parentId ? sizes.get(fw.parentId) : undefined;
     if (dc) sizes.set(fw.id, { w: FW_W, h: dc.h });
+  });
+  nodes.filter((n) => n.type === 'server').forEach((srv) => {
+    sizes.set(srv.id, { w: SRV_W, h: SRV_H });
   });
   return sizes;
 }
@@ -207,17 +214,20 @@ function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
     let y = DC_HEADER + DC_PAD;
     for (const nw of networks) {
       positions.set(nw.id, { x: DC_PAD, y });
-      let sy = NW_HEADER + NW_PAD;
-      for (const srv of nodes.filter((n) => n.parentId === nw.id)) {
-        positions.set(srv.id, { x: NW_PAD, y: sy });
-        sy += SRV_H + SRV_GAP;
-      }
+      const servers = nodes.filter((n) => n.parentId === nw.id);
+      servers.forEach((srv, idx) => {
+        const col = idx % SRV_COLUMNS;
+        const row = Math.floor(idx / SRV_COLUMNS);
+        positions.set(srv.id, { x: NW_PAD + col * (SRV_W + SRV_GAP), y: NW_HEADER + NW_PAD + row * (SRV_H + SRV_GAP) });
+      });
       y += (sizes.get(nw.id)?.h ?? 60) + NW_GAP;
     }
-    for (const srv of directServers) {
-      positions.set(srv.id, { x: DC_PAD, y });
-      y += SRV_H + SRV_GAP;
-    }
+    directServers.forEach((srv, idx) => {
+      const col = idx % SRV_COLUMNS;
+      const row = Math.floor(idx / SRV_COLUMNS);
+      positions.set(srv.id, { x: DC_PAD + col * (SRV_W + SRV_GAP), y: y + row * (SRV_H + SRV_GAP) });
+    });
+    y += Math.ceil(directServers.length / SRV_COLUMNS) * (SRV_H + SRV_GAP);
     const side: 'right' | 'left' = i === 0 ? 'right' : 'left';
     if (side === 'right') {
       positions.set(dc.id, { x: cursor, y: DC_MARGIN });
@@ -235,6 +245,8 @@ function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   });
 }
 
+type Tab = 'manage' | 'objects' | 'settings';
+
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DeviceData>>([]);
   const [connections, setConnections] = useState<Interaction[]>([]);
@@ -244,6 +256,7 @@ export default function App() {
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projects, setProjects] = useState<ProjectSummary[]>([]);
   const [status, setStatus] = useState('');
+  const [tab, setTab] = useState<Tab>('manage');
   const [theme, setTheme] = useState<'light' | 'dark'>(() => {
     const saved = localStorage.getItem('vsdoox.theme');
     if (saved === 'light' || saved === 'dark') return saved;
@@ -254,7 +267,6 @@ export default function App() {
     document.documentElement.setAttribute('data-theme', theme);
     localStorage.setItem('vsdoox.theme', theme);
   }, [theme]);
-  const toggleTheme = () => setTheme((t) => (t === 'light' ? 'dark' : 'light'));
 
   const [eType, setEType] = useState<NodeType>('server');
   const [eName, setEName] = useState('');
@@ -576,160 +588,189 @@ export default function App() {
             <span className="logo-mark">V</span>
             vsdoox · сетевые схемы
           </h1>
-          <button className="theme-toggle" onClick={toggleTheme} title="Переключить тему">
-            {theme === 'light' ? '🌙' : '☀️'}
-          </button>
         </div>
 
-        <section>
-          <label>Владелец</label>
-          <input
-            value={owner}
-            onChange={(e) => {
-              setOwner(e.target.value);
-              localStorage.setItem('vsdoox.owner', e.target.value);
-            }}
-            placeholder="Имя пользователя"
-          />
-        </section>
-
-        <section>
-          <label>Название схемы</label>
-          <input value={projectName} onChange={(e) => setProjectName(e.target.value)} />
-        </section>
-
-        <div className="row">
-          <button onClick={handleNew}>Новая</button>
-          <button className="primary" onClick={handleSave}>Сохранить</button>
+        <div className="tabs">
+          <button className={'tab' + (tab === 'manage' ? ' active' : '')} onClick={() => setTab('manage')}>Управление</button>
+          <button className={'tab' + (tab === 'objects' ? ' active' : '')} onClick={() => setTab('objects')}>Объекты</button>
+          <button className={'tab' + (tab === 'settings' ? ' active' : '')} onClick={() => setTab('settings')}>Настройки</button>
         </div>
-        <button onClick={handleExport}>Скачать .vsdx</button>
 
-        <section>
-          <label>Мои проекты</label>
-          <button onClick={refreshProjects}>Обновить список</button>
-          <ul className="projects">
-            {projects.map((p) => (
-              <li key={p.id}>
-                <button className="link" onClick={() => handleLoad(p.id)}>
-                  {p.name} (#{p.id})
-                </button>
-                <button className="del" onClick={() => handleDelete(p.id)}>✕</button>
-              </li>
-            ))}
-          </ul>
-        </section>
+        {tab === 'manage' && (
+          <>
+            <section>
+              <label>Владелец</label>
+              <input
+                value={owner}
+                onChange={(e) => {
+                  setOwner(e.target.value);
+                  localStorage.setItem('vsdoox.owner', e.target.value);
+                }}
+                placeholder="Имя пользователя"
+              />
+            </section>
 
-        <section>
-          <label>Добавить объект</label>
-          <select value={eType} onChange={(e) => setEType(e.target.value as NodeType)}>
-            <option value="server">Сервер</option>
-            <option value="network">Сеть</option>
-            <option value="firewall">МЭ (межсетевой экран)</option>
-            <option value="datacenter">ЦОД</option>
-          </select>
-          <input value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Название" />
-          {parentOptions.length > 0 && (
-            <select value={eParent} onChange={(e) => setEParent(e.target.value)}>
-              <option value="">— родитель —</option>
-              {parentOptions.map((n) => (
-                <option key={n.id} value={n.id}>
-                  {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
-                </option>
-              ))}
-            </select>
-          )}
-          <input
-            value={eAttr}
-            onChange={(e) => setEAttr(e.target.value)}
-            placeholder={PRIMARY_ATTR[eType].placeholder}
-          />
-          <div className="row">
-            <button className="primary" onClick={addEntity}>Добавить</button>
-            <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
-          </div>
-        </section>
+            <section>
+              <label>Название схемы</label>
+              <input value={projectName} onChange={(e) => setProjectName(e.target.value)} />
+            </section>
 
-        {nodes.length > 0 && (
-          <section>
-            <label>Объекты</label>
-            <ul className="projects">
-              {nodes.map((n) => (
-                <li key={n.id}>
-                  <button className="link" onClick={() => openEdit(n.id)}>
-                    {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
-                  </button>
-                  <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
-                </li>
-              ))}
-            </ul>
-          </section>
+            <div className="row">
+              <button onClick={handleNew}>Новая</button>
+              <button className="primary" onClick={handleSave}>Сохранить</button>
+            </div>
+            <button onClick={handleExport}>Скачать .vsdx</button>
+
+            <section>
+              <label>Мои проекты</label>
+              <button onClick={refreshProjects}>Обновить список</button>
+              <ul className="projects">
+                {projects.map((p) => (
+                  <li key={p.id}>
+                    <button className="link" onClick={() => handleLoad(p.id)}>
+                      {p.name} (#{p.id})
+                    </button>
+                    <button className="del" onClick={() => handleDelete(p.id)}>✕</button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section>
+              <label>Добавить объект</label>
+              <select value={eType} onChange={(e) => setEType(e.target.value as NodeType)}>
+                <option value="server">Сервер</option>
+                <option value="network">Сеть</option>
+                <option value="firewall">МЭ (межсетевой экран)</option>
+                <option value="datacenter">ЦОД</option>
+              </select>
+              <input value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Название" />
+              {parentOptions.length > 0 && (
+                <select value={eParent} onChange={(e) => setEParent(e.target.value)}>
+                  <option value="">— родитель —</option>
+                  {parentOptions.map((n) => (
+                    <option key={n.id} value={n.id}>
+                      {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
+                    </option>
+                  ))}
+                </select>
+              )}
+              <input
+                value={eAttr}
+                onChange={(e) => setEAttr(e.target.value)}
+                placeholder={PRIMARY_ATTR[eType].placeholder}
+              />
+              <button className="primary" onClick={addEntity}>Добавить</button>
+            </section>
+
+            <section>
+              <label>Связь между объектами</label>
+              <select value={cSource} onChange={(e) => setCSource(e.target.value)}>
+                <option value="">— откуда —</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.data.name}
+                  </option>
+                ))}
+              </select>
+              <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
+                <option value="">— куда —</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>
+                    {n.data.name}
+                  </option>
+                ))}
+              </select>
+              <div className="row">
+                <select value={cProtocol} onChange={(e) => setCProtocol(e.target.value)}>
+                  <option value="tcp">TCP</option>
+                  <option value="udp">UDP</option>
+                  <option value="icmp">ICMP</option>
+                  <option value="any">ANY</option>
+                </select>
+                <input value={cPort} onChange={(e) => setCPort(e.target.value)} placeholder="Порт" />
+              </div>
+              <div className="swatches">
+                {CONN_COLORS.map((col) => (
+                  <button
+                    key={col}
+                    className={'swatch' + (cColor === col ? ' active' : '')}
+                    style={{ background: col }}
+                    onClick={() => setCColor(col)}
+                    title={col}
+                  />
+                ))}
+              </div>
+              <button className="primary" onClick={addConnection}>Добавить связь</button>
+            </section>
+          </>
         )}
 
-        <section>
-          <label>Связь между объектами</label>
-          <select value={cSource} onChange={(e) => setCSource(e.target.value)}>
-            <option value="">— откуда —</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.data.name}
-              </option>
-            ))}
-          </select>
-          <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
-            <option value="">— куда —</option>
-            {nodes.map((n) => (
-              <option key={n.id} value={n.id}>
-                {n.data.name}
-              </option>
-            ))}
-          </select>
-          <div className="row">
-            <select value={cProtocol} onChange={(e) => setCProtocol(e.target.value)}>
-              <option value="tcp">TCP</option>
-              <option value="udp">UDP</option>
-              <option value="icmp">ICMP</option>
-              <option value="any">ANY</option>
-            </select>
-            <input value={cPort} onChange={(e) => setCPort(e.target.value)} placeholder="Порт" />
-          </div>
-          <div className="swatches">
-            {CONN_COLORS.map((col) => (
-              <button
-                key={col}
-                className={'swatch' + (cColor === col ? ' active' : '')}
-                style={{ background: col }}
-                onClick={() => setCColor(col)}
-                title={col}
-              />
-            ))}
-          </div>
-          <button className="primary" onClick={addConnection}>Добавить связь</button>
-        </section>
+        {tab === 'objects' && (
+          <>
+            <section>
+              <label>Объекты</label>
+              {nodes.length === 0 ? (
+                <div className="muted">Объектов пока нет</div>
+              ) : (
+                <ul className="projects">
+                  {nodes.map((n) => (
+                    <li key={n.id}>
+                      <button className="link" onClick={() => openEdit(n.id)}>
+                        {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
+                      </button>
+                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
-        {connections.length > 0 && (
-          <section>
-            <label>Связи</label>
-            <ul className="connections">
-              {connections.map((c) => (
-                <li key={c.id}>
-                  <button
-                    className="swatch-mini"
-                    style={{ background: connColor(c) }}
-                    onClick={() => cycleConnectionColor(c.id)}
-                    title="Сменить цвет"
-                  />
-                  <button className="link" onClick={() => showConnection(c)}>
-                    {nodeName(c.source_id)} → {nodeName(c.target_id)}
-                    <span className="conn-meta">
-                      {c.protocol ?? 'any'}
-                      {c.port ? ':' + c.port : ''}
-                    </span>
-                  </button>
-                  <button className="del" onClick={() => deleteConnection(c.id)}>✕</button>
-                </li>
-              ))}
-            </ul>
-          </section>
+            <section>
+              <label>Связи</label>
+              {connections.length === 0 ? (
+                <div className="muted">Связей пока нет</div>
+              ) : (
+                <ul className="connections">
+                  {connections.map((c) => (
+                    <li key={c.id}>
+                      <button
+                        className="swatch-mini"
+                        style={{ background: connColor(c) }}
+                        onClick={() => cycleConnectionColor(c.id)}
+                        title="Сменить цвет"
+                      />
+                      <button className="link" onClick={() => showConnection(c)}>
+                        {nodeName(c.source_id)} → {nodeName(c.target_id)}
+                        <span className="conn-meta">
+                          {c.protocol ?? 'any'}
+                          {c.port ? ':' + c.port : ''}
+                        </span>
+                      </button>
+                      <button className="del" onClick={() => deleteConnection(c.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
+        )}
+
+        {tab === 'settings' && (
+          <>
+            <section>
+              <label>Тема</label>
+              <div className="row">
+                <button className={theme === 'light' ? 'primary' : ''} onClick={() => setTheme('light')}>Светлая</button>
+                <button className={theme === 'dark' ? 'primary' : ''} onClick={() => setTheme('dark')}>Тёмная</button>
+              </div>
+            </section>
+
+            <section>
+              <label>Раскладка</label>
+              <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
+            </section>
+          </>
         )}
 
         {pathResult && (
