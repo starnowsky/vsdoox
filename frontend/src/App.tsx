@@ -4,6 +4,7 @@ import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
+import { WaypointEdge } from './edges';
 import {
   authLogin,
   createCustomType,
@@ -25,6 +26,8 @@ const BUILTIN_NODE_TYPES: NodeTypes = {
   network: NetworkNode,
   datacenter: DatacenterNode,
 };
+
+const edgeTypes = { waypoint: WaypointEdge };
 
 const DEFAULT_NAMES: Record<string, string> = {
   server: 'SRV',
@@ -343,6 +346,7 @@ export default function App() {
   const [cProtocol, setCProtocol] = useState('tcp');
   const [cPort, setCPort] = useState('');
   const [cColor, setCColor] = useState(DEFAULT_CONN_COLOR);
+  const [cParent, setCParent] = useState('');
 
   const [editingNodeId, setEditingNodeId] = useState<string | null>(null);
   const [editName, setEditName] = useState('');
@@ -386,15 +390,29 @@ export default function App() {
       const sc = { x: sp.x + ss.w / 2, y: sp.y + ss.h / 2 };
       const tc = { x: tp.x + ts.w / 2, y: tp.y + ts.h / 2 };
 
+      const parentId = c.attributes && typeof c.attributes.parent_id === 'string' ? c.attributes.parent_id : undefined;
+      const fwIds = parentId
+        ? [parentId]
+        : [...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)])];
+      const waypoints = fwIds
+        .filter((id) => id !== c.source_id && id !== c.target_id)
+        .map((id) => {
+          const p = abs.get(id) ?? { x: 0, y: 0 };
+          const s = sizes.get(id) ?? { w: 100, h: 50 };
+          return { x: p.x + s.w / 2, y: p.y + s.h / 2 };
+        });
+      const hasWaypoints = waypoints.length > 0;
+
       return {
         id: 'conn-' + c.id,
         source: c.source_id,
         target: c.target_id,
         sourceHandle: 's-' + closestSide(sc, tc),
         targetHandle: 't-' + closestSide(tc, sc),
-        type: 'smoothstep',
+        type: hasWaypoints ? 'waypoint' : 'smoothstep',
         label,
-        pathOptions: { offset: 30 + parallelIndex * 40, borderRadius: 8 },
+        data: hasWaypoints ? { waypoints } : undefined,
+        pathOptions: hasWaypoints ? undefined : { offset: 30 + parallelIndex * 40, borderRadius: 8 },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
@@ -499,11 +517,12 @@ export default function App() {
       target_id: cTarget,
       protocol: cProtocol || undefined,
       port: cPort || undefined,
-      attributes: { color: cColor },
+      attributes: { color: cColor, parent_id: cParent || undefined },
     };
     setConnections((cs) => cs.concat(conn));
     setCPort('');
-  }, [cSource, cTarget, cProtocol, cPort, cColor]);
+    setCParent('');
+  }, [cSource, cTarget, cProtocol, cPort, cColor, cParent]);
 
   const deleteConnection = useCallback((id: string) => {
     setConnections((cs) => cs.filter((c) => c.id !== id));
@@ -806,6 +825,12 @@ export default function App() {
                   <option key={n.id} value={n.id}>{n.data.name}</option>
                 ))}
               </select>
+              <select value={cParent} onChange={(e) => setCParent(e.target.value)}>
+                <option value="">— через (авто) —</option>
+                {nodes.map((n) => (
+                  <option key={n.id} value={n.id}>{n.data.name}</option>
+                ))}
+              </select>
               <div className="row">
                 <select value={cProtocol} onChange={(e) => setCProtocol(e.target.value)}>
                   <option value="tcp">TCP</option>
@@ -932,6 +957,7 @@ export default function App() {
           onNodesChange={onNodesChange}
           onNodeDoubleClick={(_event, node) => openEdit(node.id)}
           nodeTypes={rfNodeTypes}
+          edgeTypes={edgeTypes}
           zIndexMode="manual"
           fitView
         >
