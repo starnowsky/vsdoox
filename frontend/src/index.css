@@ -402,13 +402,13 @@ button.del:hover { background: var(--surface-2); }
 }
 .react-flow__attribution a { color: var(--text-muted); }
 
-/* связи позади объектов (не поверх сети) */
+/* связи всегда поверх объектов */
 .react-flow__edges {
-  z-index: 5;
+  z-index: 10;
 }
 
 .react-flow__nodes {
-  z-index: 10;
+  z-index: 5;
 }
 
 /* ---------- Контейнер ЦОД ---------- */

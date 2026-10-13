@@ -248,7 +248,7 @@ function applySizes(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   const sizes = computeSizes(nodes);
   return nodes.map((n) => {
     const s = sizes.get(n.id);
-    const zIndex = n.type === 'server' ? 100 : 10;
+    const zIndex = 10;
     return s ? { ...n, style: { width: s.w, height: s.h }, zIndex } : { ...n, zIndex };
   });
 }
@@ -400,7 +400,7 @@ export default function App() {
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
         labelBgPadding: [5, 3] as [number, number],
         labelBgBorderRadius: 4,
-        zIndex: 50,
+        zIndex: 100,
       } as unknown as Edge;
     });
   }, [connections, pathResult, nodes]);
