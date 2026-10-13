@@ -493,3 +493,172 @@ button.del:hover { background: var(--surface-2); }
   font-size: 11px;
   font-weight: 600;
 }
+
+/* ---------- Админка ---------- */
+.admin-btn {
+  position: fixed;
+  top: 14px;
+  right: 14px;
+  z-index: 20;
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: background 0.15s;
+}
+.admin-btn:hover { background: var(--surface-2); }
+
+.admin-page {
+  min-height: 100vh;
+  background: var(--bg);
+  color: var(--text);
+  padding: 24px;
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+
+.admin-page h1 { font-size: 20px; font-weight: 700; }
+.admin-page h2 { font-size: 15px; font-weight: 700; margin-bottom: 8px; }
+
+.admin-page label {
+  display: block;
+  font-size: 11px;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: var(--text-muted);
+  margin-top: 10px;
+}
+
+.admin-page input,
+.admin-page select {
+  width: 100%;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+  font-size: 13px;
+  margin-top: 4px;
+}
+
+.admin-page button {
+  font-family: inherit;
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  padding: 8px 12px;
+  border-radius: var(--radius-sm);
+  margin-top: 8px;
+}
+.admin-page button.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+}
+.admin-page button.del {
+  background: none;
+  border: none;
+  color: var(--danger);
+  margin-top: 0;
+  padding: 4px 6px;
+}
+
+.admin-card {
+  max-width: 380px;
+  margin: 60px auto;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  box-shadow: var(--shadow-lg);
+}
+.admin-card input { margin-top: 8px; }
+.admin-card p { color: var(--text-muted); font-size: 13px; }
+
+.admin-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 20px;
+}
+.admin-header-actions {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+.admin-header-actions button { margin-top: 0; }
+
+.admin-section {
+  max-width: 640px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  margin-bottom: 16px;
+}
+
+.admin-list {
+  list-style: none;
+  margin-top: 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.admin-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 10px;
+  background: var(--surface-2);
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+}
+
+.admin-user-form {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.admin-user-form input,
+.admin-user-form select {
+  flex: 1;
+  min-width: 120px;
+  margin-top: 0;
+}
+.admin-user-form button { margin-top: 0; }
+
+.admin-page .checkbox {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  cursor: pointer;
+  font-size: 13px;
+  font-weight: 500;
+  text-transform: none;
+  letter-spacing: normal;
+  color: var(--text);
+  margin-top: 4px;
+}
+.admin-page .checkbox input { width: auto; margin-top: 0; }
+
+.error { color: var(--danger); font-size: 13px; }
+.success { color: var(--success); font-size: 13px; }
+
+.admin-page a.link {
+  color: var(--accent);
+  text-decoration: none;
+  font-size: 13px;
+}
+.admin-page a.link:hover { text-decoration: underline; }

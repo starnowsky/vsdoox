@@ -5,6 +5,7 @@ from flask import Flask, request, jsonify, send_file
 from flask_cors import CORS
 from generator import VisioGenerator, compute_layout
 import storage
+import admin
 from topology import analyze_interaction
 
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
@@ -189,6 +190,122 @@ def export():
         import traceback
         traceback.print_exc()
         return jsonify({'error': str(e)}), 500
+
+
+# ---------- Администрирование ----------
+
+def _require_admin():
+    token = request.headers.get('X-Admin-Token')
+    if not token or not admin.verify_token(token):
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    return None
+
+
+@app.route('/admin')
+def admin_page():
+    return app.send_static_file('index.html')
+
+
+@app.route('/api/admin/status', methods=['GET'])
+def admin_status():
+    return jsonify({'configured': admin.is_configured()})
+
+
+@app.route('/api/admin/setup', methods=['POST'])
+def admin_setup():
+    try:
+        data = request.get_json(silent=True) or {}
+        token = admin.setup_key(data.get('key'))
+        return jsonify({'token': token})
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/admin/login', methods=['POST'])
+def admin_login():
+    data = request.get_json(silent=True) or {}
+    token = admin.login(data.get('key'))
+    if not token:
+        return jsonify({'error': 'Неверный ключ'}), 401
+    return jsonify({'token': token})
+
+
+@app.route('/api/admin/keycloak', methods=['GET'])
+def admin_keycloak_get():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify(admin.get_keycloak())
+
+
+@app.route('/api/admin/keycloak', methods=['PUT'])
+def admin_keycloak_put():
+    err = _require_admin()
+    if err:
+        return err
+    admin.save_keycloak(request.get_json(silent=True) or {})
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/groups', methods=['GET'])
+def admin_groups_list():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify({'groups': admin.list_groups()})
+
+
+@app.route('/api/admin/groups', methods=['POST'])
+def admin_groups_create():
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        gid = admin.create_group((request.get_json(silent=True) or {}).get('name'))
+        return jsonify({'id': gid}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/admin/groups/<int:gid>', methods=['DELETE'])
+def admin_groups_delete(gid):
+    err = _require_admin()
+    if err:
+        return err
+    admin.delete_group(gid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/users', methods=['GET'])
+def admin_users_list():
+    err = _require_admin()
+    if err:
+        return err
+    return jsonify({'users': admin.list_users()})
+
+
+@app.route('/api/admin/users', methods=['POST'])
+def admin_users_create():
+    err = _require_admin()
+    if err:
+        return err
+    try:
+        d = request.get_json(silent=True) or {}
+        uid = admin.create_user(d.get('username'), d.get('password'), d.get('group_id'))
+        return jsonify({'id': uid}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/admin/users/<int:uid>', methods=['DELETE'])
+def admin_users_delete(uid):
+    err = _require_admin()
+    if err:
+        return err
+    admin.delete_user(uid)
+    return jsonify({'ok': True})
 
 
 if __name__ == '__main__':

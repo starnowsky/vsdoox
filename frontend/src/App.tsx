@@ -582,6 +582,7 @@ export default function App() {
 
   return (
     <div className="app">
+      <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>
@@ -662,6 +663,28 @@ export default function App() {
               />
               <button className="primary" onClick={addEntity}>Добавить</button>
             </section>
+          </>
+        )}
+
+        {tab === 'objects' && (
+          <>
+            <section>
+              <label>Объекты</label>
+              {nodes.length === 0 ? (
+                <div className="muted">Объектов пока нет</div>
+              ) : (
+                <ul className="projects">
+                  {nodes.map((n) => (
+                    <li key={n.id}>
+                      <button className="link" onClick={() => openEdit(n.id)}>
+                        {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
+                      </button>
+                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
 
             <section>
               <label>Связь между объектами</label>
@@ -702,28 +725,6 @@ export default function App() {
                 ))}
               </div>
               <button className="primary" onClick={addConnection}>Добавить связь</button>
-            </section>
-          </>
-        )}
-
-        {tab === 'objects' && (
-          <>
-            <section>
-              <label>Объекты</label>
-              {nodes.length === 0 ? (
-                <div className="muted">Объектов пока нет</div>
-              ) : (
-                <ul className="projects">
-                  {nodes.map((n) => (
-                    <li key={n.id}>
-                      <button className="link" onClick={() => openEdit(n.id)}>
-                        {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
-                      </button>
-                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </section>
 
             <section>

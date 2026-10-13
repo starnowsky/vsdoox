@@ -1,7 +1,7 @@
 """SQLAlchemy ORM-модели приложения."""
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -68,3 +68,29 @@ class Connection(Base):
     port = Column(String(64))
     attributes = Column(JSON, default=dict, nullable=False)
     project = relationship('Project', back_populates='connections')
+
+
+class Setting(Base):
+    __tablename__ = 'settings'
+    key = Column(String(64), primary_key=True)
+    value = Column(Text, nullable=True)
+
+
+class AdminSession(Base):
+    __tablename__ = 'admin_sessions'
+    token = Column(String(64), primary_key=True)
+    created_at = Column(DateTime, default=utcnow, nullable=False)
+
+
+class Group(Base):
+    __tablename__ = 'groups'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), unique=True, nullable=False)
+
+
+class LocalUser(Base):
+    __tablename__ = 'local_users'
+    id = Column(Integer, primary_key=True)
+    username = Column(String(120), unique=True, nullable=False)
+    password_hash = Column(String(255), nullable=False)
+    group_id = Column(Integer, ForeignKey('groups.id', ondelete='SET NULL'), nullable=True)
