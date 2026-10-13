@@ -141,6 +141,10 @@ class VisioGenerator:
             # _rels/.rels
             z.writestr('_rels/.rels', self._root_rels())
 
+            # docProps (обязательные для открытия в Visio)
+            z.writestr('docProps/core.xml', self._core_props_xml())
+            z.writestr('docProps/app.xml', self._app_props_xml())
+
             # visio/document.xml
             z.writestr('visio/document.xml', self._document_xml())
 
@@ -171,12 +175,16 @@ class VisioGenerator:
   <Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>
   <Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>
   <Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>
+  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
+  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>'''
 
     def _root_rels(self):
         return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/document" Target="visio/document.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
 </Relationships>'''
 
     def _document_rels(self):
@@ -343,6 +351,24 @@ class VisioGenerator:
         <Cell N="EndArrow" V="4"/>
       </Section>
     </Shape>'''
+    def _app_props_xml(self):
+        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
+  <Application>Microsoft Visio</Application>
+  <AppVersion>16.0000</AppVersion>
+</Properties>'''
+
+    def _core_props_xml(self):
+        title = _xml_escape(self.title or 'Схема')
+        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+  <dc:title>{title}</dc:title>
+  <dc:creator>vsdoox</dc:creator>
+  <cp:lastModifiedBy>vsdoox</cp:lastModifiedBy>
+  <dcterms:created xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:created>
+  <dcterms:modified xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:modified>
+</cp:coreProperties>'''
+
     # ---------- Экспорт графа (новый формат) ----------
 
     def build_graph(self, nodes, connections):
@@ -392,6 +418,8 @@ class VisioGenerator:
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
             z.writestr('[Content_Types].xml', self._content_types())
             z.writestr('_rels/.rels', self._root_rels())
+            z.writestr('docProps/core.xml', self._core_props_xml())
+            z.writestr('docProps/app.xml', self._app_props_xml())
             z.writestr('visio/document.xml', self._document_xml())
             z.writestr('visio/_rels/document.xml.rels', self._document_rels())
             z.writestr('visio/pages/pages.xml', self._pages_xml_sized(page_w, page_h))

@@ -19,7 +19,7 @@ import {
 import type { CustomType, ProjectSummary } from './api';
 import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from './types';
 
-const nodeTypes: NodeTypes = {
+const BUILTIN_NODE_TYPES: NodeTypes = {
   server: DeviceNode,
   firewall: DeviceNode,
   network: NetworkNode,
@@ -248,7 +248,8 @@ function applySizes(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   const sizes = computeSizes(nodes);
   return nodes.map((n) => {
     const s = sizes.get(n.id);
-    return s ? { ...n, style: { width: s.w, height: s.h } } : n;
+    const zIndex = n.type === 'server' ? 100 : 10;
+    return s ? { ...n, style: { width: s.w, height: s.h }, zIndex } : { ...n, zIndex };
   });
 }
 
@@ -352,6 +353,14 @@ export default function App() {
 
   const displayNodes = useMemo(() => applySizes(nodes), [nodes]);
 
+  const rfNodeTypes = useMemo<NodeTypes>(() => {
+    const types: NodeTypes = { ...BUILTIN_NODE_TYPES };
+    customTypes.forEach((t) => {
+      types[t.name] = DeviceNode;
+    });
+    return types;
+  }, [customTypes]);
+
   const edges = useMemo<Edge[]>(() => {
     const pathNodes = new Set(pathResult?.path ?? []);
     const abs = absolutePositions(nodes);
@@ -391,6 +400,7 @@ export default function App() {
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
         labelBgPadding: [5, 3] as [number, number],
         labelBgBorderRadius: 4,
+        zIndex: 50,
       } as unknown as Edge;
     });
   }, [connections, pathResult, nodes]);
@@ -921,7 +931,8 @@ export default function App() {
           edges={edges}
           onNodesChange={onNodesChange}
           onNodeDoubleClick={(_event, node) => openEdit(node.id)}
-          nodeTypes={nodeTypes}
+          nodeTypes={rfNodeTypes}
+          zIndexMode="manual"
           fitView
         >
           <Background color={theme === 'dark' ? '#2a3340' : '#e2e6ea'} />
