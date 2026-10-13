@@ -4,7 +4,7 @@ import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
-import { createProject, deleteProject, getProject, listProjects, saveProject } from './api';
+import { createProject, deleteProject, exportVSDX, getProject, listProjects, saveProject } from './api';
 import type { ProjectSummary } from './api';
 import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from './types';
 
@@ -424,6 +424,62 @@ export default function App() {
     }
   }, [owner, projectName, projectId, nodes, connections, refreshProjects]);
 
+  const handleExport = useCallback(async () => {
+    try {
+      const sizes = computeSizes(nodes);
+      const abs = new Map<string, { x: number; y: number }>();
+      const byId = new Map(nodes.map((n) => [n.id, n]));
+      const getAbs = (id: string): { x: number; y: number } => {
+        const cached = abs.get(id);
+        if (cached) return cached;
+        const n = byId.get(id);
+        if (!n) return { x: 0, y: 0 };
+        const base = n.parentId ? getAbs(n.parentId) : { x: 0, y: 0 };
+        const r = { x: base.x + n.position.x, y: base.y + n.position.y };
+        abs.set(id, r);
+        return r;
+      };
+
+      const payloadNodes = nodes.map((n) => {
+        const p = getAbs(n.id);
+        const s = sizes.get(n.id) ?? { w: 130, h: 48 };
+        return {
+          id: n.id,
+          type: n.type,
+          name: n.data.name,
+          x: p.x,
+          y: p.y,
+          w: s.w,
+          h: s.h,
+          attributes: n.data.attributes ?? {},
+        };
+      });
+
+      const blob = await exportVSDX({
+        title: projectName,
+        nodes: payloadNodes,
+        connections: connections.map((c) => ({
+          source_id: c.source_id,
+          target_id: c.target_id,
+          protocol: c.protocol,
+          port: c.port,
+          color:
+            c.attributes && typeof c.attributes.color === 'string' ? c.attributes.color : undefined,
+        })),
+      });
+
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (projectName || 'Схема') + '.vsdx';
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus('Файл .vsdx скачан');
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }, [nodes, connections, projectName]);
+
   const handleLoad = useCallback(
     async (id: number) => {
       try {
@@ -546,6 +602,7 @@ export default function App() {
           <button onClick={handleNew}>Новая</button>
           <button className="primary" onClick={handleSave}>Сохранить</button>
         </div>
+        <button onClick={handleExport}>Скачать .vsdx</button>
 
         <section>
           <label>Мои проекты</label>

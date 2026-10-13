@@ -164,5 +164,32 @@ def path_analyze():
     return jsonify(result)
 
 
+@app.route('/api/export', methods=['POST'])
+def export():
+    """Экспорт графа (узлы с координатами/типами + связи) в .vsdx."""
+    try:
+        data = request.get_json(silent=True) or {}
+        nodes = data.get('nodes', [])
+        connections = data.get('connections', [])
+        title = _clean_title(data.get('title') or 'Схема')
+
+        if not isinstance(nodes, list) or not nodes:
+            return jsonify({'error': 'Нет узлов для экспорта'}), 400
+
+        generator = VisioGenerator(title=title)
+        output = generator.build_graph(nodes, connections)
+
+        return send_file(
+            io.BytesIO(output),
+            mimetype='application/vnd.ms-visio.drawing',
+            as_attachment=True,
+            download_name=f'{title}.vsdx'
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)

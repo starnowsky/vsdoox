@@ -65,3 +65,26 @@ export function analyzePath(
     body: JSON.stringify({ nodes, links, source_id: sourceId, target_id: targetId }),
   });
 }
+
+export async function exportVSDX(payload: {
+  title: string;
+  nodes: unknown[];
+  connections: unknown[];
+}): Promise<Blob> {
+  const res = await fetch('/api/export', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let message = 'Ошибка экспорта';
+    try {
+      const body = await res.json();
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch {
+      // тело не JSON — оставляем дефолтное сообщение
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}

@@ -95,6 +95,7 @@ python -m unittest discover -s tests
 | PUT | `/api/projects/<id>` | сохранить граф целиком |
 | DELETE | `/api/projects/<id>` | удалить проект |
 | POST | `/api/path` | расчёт маршрута `{nodes, links, source_id, target_id}` → `{found, path, firewalls, segments}` |
+| POST | `/api/export` | экспорт графа `{title, nodes, connections}` в `.vsdx` |
 | POST | `/api/preview` | координаты для SVG-предпросмотра (старый флоу) |
 | POST | `/api/generate` | скачать `.vsdx` (старый флоу) |
 
