@@ -2,7 +2,7 @@ export type NodeType = 'server' | 'firewall' | 'network' | 'datacenter';
 
 export interface GraphNode {
   id: string;
-  type: NodeType;
+  type: string;
   name: string;
   parent_id?: string | null;
   x: number;

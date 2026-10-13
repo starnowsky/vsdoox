@@ -170,3 +170,28 @@ export function adminCreateUser(
 export function adminDeleteUser(token: string, id: number): Promise<{ ok: boolean }> {
   return adminRequest('/api/admin/users/' + id, token, { method: 'DELETE' });
 }
+
+// --- Кастомные типы объектов ---
+
+export interface CustomType {
+  id: number;
+  name: string;
+}
+
+export function listCustomTypes(): Promise<{ types: CustomType[] }> {
+  return request('/api/custom-types');
+}
+
+export function createCustomType(name: string): Promise<{ id: number }> {
+  return request('/api/custom-types', { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function deleteCustomType(id: number): Promise<{ ok: boolean }> {
+  return request('/api/custom-types/' + id, { method: 'DELETE' });
+}
+
+// --- Авторизация (логин/пароль) ---
+
+export function authLogin(username: string, password: string): Promise<{ token: string; username: string }> {
+  return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
+}

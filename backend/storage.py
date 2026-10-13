@@ -10,7 +10,7 @@ import uuid
 from sqlalchemy import create_engine, delete, select
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Connection, Link, Node, Project, User, utcnow
+from models import Base, Connection, CustomType, Link, Node, Project, User, utcnow
 
 NODE_TYPES = {'server', 'firewall', 'network', 'datacenter'}
 
@@ -161,9 +161,7 @@ def save_project(project_id, name, nodes, links, connections):
         session.execute(delete(Node).where(Node.project_id == project_id))
 
         for n in nodes or []:
-            ntype = n.get('type', 'server')
-            if ntype not in NODE_TYPES:
-                ntype = 'server'
+            ntype = str(n.get('type') or 'server').strip() or 'server'
             session.add(Node(
                 id=_ensure_id(n.get('id')), project_id=project_id, type=ntype,
                 name=(n.get('name') or '').strip() or 'Узел',
@@ -194,4 +192,31 @@ def delete_project(project_id):
         session.execute(delete(Link).where(Link.project_id == project_id))
         session.execute(delete(Node).where(Node.project_id == project_id))
         session.execute(delete(Project).where(Project.id == project_id))
+        session.commit()
+
+
+# --- Кастомные типы объектов ---
+
+def list_custom_types():
+    with SessionLocal() as session:
+        rows = session.execute(select(CustomType).order_by(CustomType.name)).scalars().all()
+        return [{'id': t.id, 'name': t.name} for t in rows]
+
+
+def create_custom_type(name):
+    name = (name or '').strip()
+    if not name:
+        raise ValueError('Название типа обязательно')
+    with SessionLocal() as session:
+        if session.execute(select(CustomType).where(CustomType.name == name)).scalar_one_or_none():
+            raise ValueError('Тип уже существует')
+        t = CustomType(name=name)
+        session.add(t)
+        session.commit()
+        return t.id
+
+
+def delete_custom_type(tid):
+    with SessionLocal() as session:
+        session.execute(delete(CustomType).where(CustomType.id == tid))
         session.commit()

@@ -94,3 +94,9 @@ class LocalUser(Base):
     username = Column(String(120), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
     group_id = Column(Integer, ForeignKey('groups.id', ondelete='SET NULL'), nullable=True)
+
+
+class CustomType(Base):
+    __tablename__ = 'custom_types'
+    id = Column(Integer, primary_key=True)
+    name = Column(String(120), unique=True, nullable=False)

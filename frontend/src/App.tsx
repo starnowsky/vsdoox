@@ -4,8 +4,19 @@ import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
-import { createProject, deleteProject, exportVSDX, getProject, listProjects, saveProject } from './api';
-import type { ProjectSummary } from './api';
+import {
+  authLogin,
+  createCustomType,
+  createProject,
+  deleteCustomType,
+  deleteProject,
+  exportVSDX,
+  getProject,
+  listCustomTypes,
+  listProjects,
+  saveProject,
+} from './api';
+import type { CustomType, ProjectSummary } from './api';
 import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from './types';
 
 const nodeTypes: NodeTypes = {
@@ -15,11 +26,11 @@ const nodeTypes: NodeTypes = {
   datacenter: DatacenterNode,
 };
 
-const DEFAULT_NAMES: Record<NodeType, string> = {
-  server: 'Сервер',
-  firewall: 'МЭ',
-  network: 'Сеть',
-  datacenter: 'ЦОД',
+const DEFAULT_NAMES: Record<string, string> = {
+  server: 'SRV',
+  firewall: 'FW',
+  network: 'NET',
+  datacenter: 'DC',
 };
 
 interface AttrField {
@@ -54,7 +65,22 @@ const PARENT_OPTIONS: Partial<Record<NodeType, NodeType[]>> = {
   network: ['firewall', 'datacenter'],
 };
 
-const CONN_COLORS = ['#3b82f6', '#ef4444', '#10b981', '#f59e0b', '#8b5cf6', '#64748b'];
+function primaryAttrFor(type: string): AttrField | undefined {
+  return PRIMARY_ATTR[type as NodeType];
+}
+
+function parentOptionsFor(type: string): NodeType[] | undefined {
+  if (type === 'datacenter') return undefined;
+  const p = PARENT_OPTIONS[type as NodeType];
+  if (p) return p;
+  return ['network', 'firewall', 'datacenter'];
+}
+
+function typeName(type: string): string {
+  return DEFAULT_NAMES[type] ?? type;
+}
+
+const CONN_COLORS = ['#4a6b8a', '#a86a6a', '#6a8a6a', '#a88a5a', '#7a6a9a', '#7a7f86'];
 const DEFAULT_CONN_COLOR = CONN_COLORS[0];
 
 const DC_W = 340;
@@ -123,6 +149,30 @@ function connColor(c: Interaction): string {
   return col || DEFAULT_CONN_COLOR;
 }
 
+function closestSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
+  const dx = to.x - from.x;
+  const dy = to.y - from.y;
+  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
+  return dy > 0 ? 'bottom' : 'top';
+}
+
+function absolutePositions(nodes: Node<DeviceData>[]): Map<string, { x: number; y: number }> {
+  const abs = new Map<string, { x: number; y: number }>();
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const getAbs = (id: string): { x: number; y: number } => {
+    const cached = abs.get(id);
+    if (cached) return cached;
+    const n = byId.get(id);
+    if (!n) return { x: 0, y: 0 };
+    const base = n.parentId ? getAbs(n.parentId) : { x: 0, y: 0 };
+    const r = { x: base.x + n.position.x, y: base.y + n.position.y };
+    abs.set(id, r);
+    return r;
+  };
+  nodes.forEach((n) => abs.set(n.id, getAbs(n.id)));
+  return abs;
+}
+
 function toGraph(
   nodes: Node<DeviceData>[],
   connections: Interaction[],
@@ -130,7 +180,7 @@ function toGraph(
   return {
     nodes: nodes.map((n) => ({
       id: n.id,
-      type: (n.type as NodeType) ?? 'server',
+      type: n.type ?? 'server',
       name: n.data.name,
       parent_id: n.data.parent_id ?? null,
       x: n.position.x,
@@ -251,6 +301,11 @@ export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DeviceData>>([]);
   const [connections, setConnections] = useState<Interaction[]>([]);
 
+  const [userToken, setUserToken] = useState<string>(() => localStorage.getItem('vsdoox.user.token') ?? '');
+  const [loginUser, setLoginUser] = useState('');
+  const [loginPass, setLoginPass] = useState('');
+  const [loginError, setLoginError] = useState('');
+
   const [owner, setOwner] = useState<string>(() => localStorage.getItem('vsdoox.owner') ?? '');
   const [projectName, setProjectName] = useState('Схема L2');
   const [projectId, setProjectId] = useState<number | null>(null);
@@ -268,7 +323,16 @@ export default function App() {
     localStorage.setItem('vsdoox.theme', theme);
   }, [theme]);
 
-  const [eType, setEType] = useState<NodeType>('server');
+  const [customTypes, setCustomTypes] = useState<CustomType[]>([]);
+  const [newTypeName, setNewTypeName] = useState('');
+
+  useEffect(() => {
+    listCustomTypes()
+      .then((r) => setCustomTypes(r.types))
+      .catch(() => {});
+  }, []);
+
+  const [eType, setEType] = useState<string>('server');
   const [eName, setEName] = useState('');
   const [eParent, setEParent] = useState('');
   const [eAttr, setEAttr] = useState('');
@@ -290,6 +354,8 @@ export default function App() {
 
   const edges = useMemo<Edge[]>(() => {
     const pathNodes = new Set(pathResult?.path ?? []);
+    const abs = absolutePositions(nodes);
+    const sizes = computeSizes(nodes);
     const groups = new Map<string, Interaction[]>();
     connections.forEach((c) => {
       const key = [c.source_id, c.target_id].sort().join('->');
@@ -303,10 +369,20 @@ export default function App() {
       const color = connColor(c);
       const label = (c.protocol ?? 'any') + (c.port ? ':' + c.port : '');
       const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
+
+      const sp = abs.get(c.source_id) ?? { x: 0, y: 0 };
+      const tp = abs.get(c.target_id) ?? { x: 0, y: 0 };
+      const ss = sizes.get(c.source_id) ?? { w: 130, h: 48 };
+      const ts = sizes.get(c.target_id) ?? { w: 130, h: 48 };
+      const sc = { x: sp.x + ss.w / 2, y: sp.y + ss.h / 2 };
+      const tc = { x: tp.x + ts.w / 2, y: tp.y + ts.h / 2 };
+
       return {
         id: 'conn-' + c.id,
         source: c.source_id,
         target: c.target_id,
+        sourceHandle: 's-' + closestSide(sc, tc),
+        targetHandle: 't-' + closestSide(tc, sc),
         type: 'smoothstep',
         label,
         pathOptions: { offset: 24 + parallelIndex * 30, borderRadius: 8 },
@@ -317,23 +393,63 @@ export default function App() {
         labelBgBorderRadius: 4,
       } as unknown as Edge;
     });
-  }, [connections, pathResult]);
+  }, [connections, pathResult, nodes]);
 
   const parentOptions = useMemo(() => {
-    const allowed = PARENT_OPTIONS[eType];
+    const allowed = parentOptionsFor(eType);
     if (!allowed) return [];
     return nodes.filter((n) => allowed.includes(n.type as NodeType));
   }, [eType, nodes]);
 
+  const handleLogin = async () => {
+    setLoginError('');
+    try {
+      const res = await authLogin(loginUser, loginPass);
+      localStorage.setItem('vsdoox.user.token', res.token);
+      localStorage.setItem('vsdoox.user.name', res.username);
+      setUserToken(res.token);
+      setOwner(res.username);
+      localStorage.setItem('vsdoox.owner', res.username);
+    } catch (e) {
+      setLoginError((e as Error).message);
+    }
+  };
+
+  const handleLogout = () => {
+    localStorage.removeItem('vsdoox.user.token');
+    localStorage.removeItem('vsdoox.user.name');
+    setUserToken('');
+  };
+
+  const handleAddCustomType = async () => {
+    setStatus('');
+    try {
+      await createCustomType(newTypeName);
+      setNewTypeName('');
+      setCustomTypes((await listCustomTypes()).types);
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  };
+
+  const handleDeleteCustomType = async (id: number) => {
+    try {
+      await deleteCustomType(id);
+      setCustomTypes((await listCustomTypes()).types);
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  };
+
   const addEntity = useCallback(() => {
-    const name = eName.trim() || DEFAULT_NAMES[eType];
+    const name = eName.trim() || typeName(eType);
     const logicalParent: string | null = eType === 'datacenter' ? null : eParent || null;
     const visualParent = visualParentFor(logicalParent, nodes);
 
     const attrs: Record<string, unknown> = {};
-    if (eAttr.trim()) {
-      const key = PRIMARY_ATTR[eType].key;
-      attrs[key] = eAttr.trim();
+    const pf = primaryAttrFor(eType);
+    if (eAttr.trim() && pf) {
+      attrs[pf.key] = eAttr.trim();
     }
 
     const node: Node<DeviceData> = {
@@ -439,21 +555,9 @@ export default function App() {
   const handleExport = useCallback(async () => {
     try {
       const sizes = computeSizes(nodes);
-      const abs = new Map<string, { x: number; y: number }>();
-      const byId = new Map(nodes.map((n) => [n.id, n]));
-      const getAbs = (id: string): { x: number; y: number } => {
-        const cached = abs.get(id);
-        if (cached) return cached;
-        const n = byId.get(id);
-        if (!n) return { x: 0, y: 0 };
-        const base = n.parentId ? getAbs(n.parentId) : { x: 0, y: 0 };
-        const r = { x: base.x + n.position.x, y: base.y + n.position.y };
-        abs.set(id, r);
-        return r;
-      };
-
+      const abs = absolutePositions(nodes);
       const payloadNodes = nodes.map((n) => {
-        const p = getAbs(n.id);
+        const p = abs.get(n.id) ?? { x: 0, y: 0 };
         const s = sizes.get(n.id) ?? { w: 130, h: 48 };
         return {
           id: n.id,
@@ -576,9 +680,24 @@ export default function App() {
   const nodeName = (id: string): string => nodes.find((n) => n.id === id)?.data.name ?? id;
 
   const editingNode = editingNodeId ? nodes.find((n) => n.id === editingNodeId) ?? null : null;
-  const editingType: NodeType | null = editingNode ? ((editingNode.type as NodeType) ?? 'server') : null;
-  const editingFields = editingType ? ATTR_FIELDS[editingType] : [];
-  const editingParentType = editingType ? PARENT_OPTIONS[editingType] : undefined;
+  const editingType: string | null = editingNode ? editingNode.type ?? 'server' : null;
+  const editingFields = editingType ? ATTR_FIELDS[editingType as NodeType] ?? [] : [];
+  const editingParentType = editingType ? parentOptionsFor(editingType) : undefined;
+
+  if (!userToken) {
+    return (
+      <div className="login-page">
+        <div className="login-card">
+          <h1>vsdoox · сетевые схемы</h1>
+          <p className="muted">Вход по логину и паролю</p>
+          <input value={loginUser} onChange={(e) => setLoginUser(e.target.value)} placeholder="Логин" autoFocus />
+          <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} placeholder="Пароль" />
+          <button className="primary" onClick={handleLogin}>Войти</button>
+          {loginError && <div className="error">{loginError}</div>}
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="app">
@@ -599,18 +718,6 @@ export default function App() {
 
         {tab === 'manage' && (
           <>
-            <section>
-              <label>Владелец</label>
-              <input
-                value={owner}
-                onChange={(e) => {
-                  setOwner(e.target.value);
-                  localStorage.setItem('vsdoox.owner', e.target.value);
-                }}
-                placeholder="Имя пользователя"
-              />
-            </section>
-
             <section>
               <label>Название схемы</label>
               <input value={projectName} onChange={(e) => setProjectName(e.target.value)} />
@@ -639,11 +746,14 @@ export default function App() {
 
             <section>
               <label>Добавить объект</label>
-              <select value={eType} onChange={(e) => setEType(e.target.value as NodeType)}>
-                <option value="server">Сервер</option>
-                <option value="network">Сеть</option>
-                <option value="firewall">МЭ (межсетевой экран)</option>
-                <option value="datacenter">ЦОД</option>
+              <select value={eType} onChange={(e) => setEType(e.target.value)}>
+                <option value="server">SRV — сервер</option>
+                <option value="network">NET — сеть</option>
+                <option value="firewall">FW — межсетевой экран</option>
+                <option value="datacenter">DC — ЦОД</option>
+                {customTypes.map((t) => (
+                  <option key={t.id} value={t.name}>{t.name}</option>
+                ))}
               </select>
               <input value={eName} onChange={(e) => setEName(e.target.value)} placeholder="Название" />
               {parentOptions.length > 0 && (
@@ -651,16 +761,18 @@ export default function App() {
                   <option value="">— родитель —</option>
                   {parentOptions.map((n) => (
                     <option key={n.id} value={n.id}>
-                      {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
+                      {n.data.name} ({typeName(n.type ?? '')})
                     </option>
                   ))}
                 </select>
               )}
-              <input
-                value={eAttr}
-                onChange={(e) => setEAttr(e.target.value)}
-                placeholder={PRIMARY_ATTR[eType].placeholder}
-              />
+              {primaryAttrFor(eType) && (
+                <input
+                  value={eAttr}
+                  onChange={(e) => setEAttr(e.target.value)}
+                  placeholder={primaryAttrFor(eType)!.placeholder}
+                />
+              )}
               <button className="primary" onClick={addEntity}>Добавить</button>
             </section>
           </>
@@ -669,39 +781,17 @@ export default function App() {
         {tab === 'objects' && (
           <>
             <section>
-              <label>Объекты</label>
-              {nodes.length === 0 ? (
-                <div className="muted">Объектов пока нет</div>
-              ) : (
-                <ul className="projects">
-                  {nodes.map((n) => (
-                    <li key={n.id}>
-                      <button className="link" onClick={() => openEdit(n.id)}>
-                        {n.data.name} <span className="conn-meta">{DEFAULT_NAMES[n.type as NodeType] ?? n.type}</span>
-                      </button>
-                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
-            </section>
-
-            <section>
               <label>Связь между объектами</label>
               <select value={cSource} onChange={(e) => setCSource(e.target.value)}>
                 <option value="">— откуда —</option>
                 {nodes.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.data.name}
-                  </option>
+                  <option key={n.id} value={n.id}>{n.data.name}</option>
                 ))}
               </select>
               <select value={cTarget} onChange={(e) => setCTarget(e.target.value)}>
                 <option value="">— куда —</option>
                 {nodes.map((n) => (
-                  <option key={n.id} value={n.id}>
-                    {n.data.name}
-                  </option>
+                  <option key={n.id} value={n.id}>{n.data.name}</option>
                 ))}
               </select>
               <div className="row">
@@ -728,6 +818,24 @@ export default function App() {
             </section>
 
             <section>
+              <label>Объекты</label>
+              {nodes.length === 0 ? (
+                <div className="muted">Объектов пока нет</div>
+              ) : (
+                <ul className="projects">
+                  {nodes.map((n) => (
+                    <li key={n.id}>
+                      <button className="link" onClick={() => openEdit(n.id)}>
+                        {n.data.name} <span className="conn-meta">{typeName(n.type ?? '')}</span>
+                      </button>
+                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+
+            <section>
               <label>Связи</label>
               {connections.length === 0 ? (
                 <div className="muted">Связей пока нет</div>
@@ -743,10 +851,7 @@ export default function App() {
                       />
                       <button className="link" onClick={() => showConnection(c)}>
                         {nodeName(c.source_id)} → {nodeName(c.target_id)}
-                        <span className="conn-meta">
-                          {c.protocol ?? 'any'}
-                          {c.port ? ':' + c.port : ''}
-                        </span>
+                        <span className="conn-meta">{c.protocol ?? 'any'}{c.port ? ':' + c.port : ''}</span>
                       </button>
                       <button className="del" onClick={() => deleteConnection(c.id)}>✕</button>
                     </li>
@@ -770,6 +875,27 @@ export default function App() {
             <section>
               <label>Раскладка</label>
               <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
+            </section>
+
+            <section>
+              <label>Типы объектов</label>
+              <div className="row">
+                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="Новый тип" />
+                <button className="primary" onClick={handleAddCustomType}>Добавить</button>
+              </div>
+              <ul className="projects">
+                {customTypes.map((t) => (
+                  <li key={t.id}>
+                    <span className="link">{t.name}</span>
+                    <button className="del" onClick={() => handleDeleteCustomType(t.id)}>✕</button>
+                  </li>
+                ))}
+              </ul>
+            </section>
+
+            <section>
+              <label>Сессия</label>
+              <button onClick={handleLogout}>Выйти</button>
             </section>
           </>
         )}
@@ -796,7 +922,7 @@ export default function App() {
           nodeTypes={nodeTypes}
           fitView
         >
-          <Background color={theme === 'dark' ? '#1e293b' : '#e2e8f0'} />
+          <Background color={theme === 'dark' ? '#2a3340' : '#e2e6ea'} />
           <Controls />
           <MiniMap />
         </ReactFlow>
@@ -808,7 +934,7 @@ export default function App() {
             <h2>Свойства объекта</h2>
             <label>Название</label>
             <input value={editName} onChange={(e) => setEditName(e.target.value)} autoFocus />
-            <label>Тип: {DEFAULT_NAMES[editingType]}</label>
+            <label>Тип: {typeName(editingType)}</label>
             {editingParentType && (
               <>
                 <label>Родитель</label>
@@ -818,7 +944,7 @@ export default function App() {
                     .filter((n) => editingParentType.includes(n.type as NodeType) && n.id !== editingNodeId)
                     .map((n) => (
                       <option key={n.id} value={n.id}>
-                        {n.data.name} ({DEFAULT_NAMES[n.type as NodeType]})
+                        {n.data.name} ({typeName(n.type ?? '')})
                       </option>
                     ))}
                 </select>

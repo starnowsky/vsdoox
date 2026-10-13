@@ -1,43 +1,43 @@
 :root {
-  --bg: #f7f8fa;
+  --bg: #f4f6f8;
   --surface: #ffffff;
-  --surface-2: #f1f4f8;
-  --border: #e5e9f0;
-  --border-strong: #cdd5e0;
-  --text: #0f172a;
-  --text-muted: #64748b;
-  --accent: #2563eb;
-  --accent-hover: #1d4ed8;
-  --accent-soft: rgba(37, 99, 235, 0.10);
-  --danger: #dc2626;
-  --success: #16a34a;
-  --warning: #d97706;
-  --shadow-sm: 0 1px 2px rgba(15, 23, 42, 0.05);
-  --shadow-md: 0 4px 14px rgba(15, 23, 42, 0.10);
-  --shadow-lg: 0 16px 40px rgba(15, 23, 42, 0.16);
+  --surface-2: #eef1f4;
+  --border: #e3e7ec;
+  --border-strong: #cdd5de;
+  --text: #2a3038;
+  --text-muted: #6c757d;
+  --accent: #4a6b8a;
+  --accent-hover: #3d5a75;
+  --accent-soft: rgba(74, 107, 138, 0.12);
+  --danger: #b05050;
+  --success: #4a8a5a;
+  --warning: #a08040;
+  --shadow-sm: 0 1px 2px rgba(42, 48, 56, 0.05);
+  --shadow-md: 0 4px 14px rgba(42, 48, 56, 0.10);
+  --shadow-lg: 0 16px 40px rgba(42, 48, 56, 0.16);
   --radius: 12px;
   --radius-sm: 8px;
-  --edge-color: #b6bdca;
+  --edge-color: #aab4bf;
 }
 
 [data-theme='dark'] {
-  --bg: #0b1120;
-  --surface: #101828;
-  --surface-2: #1c2739;
-  --border: #1f2a3d;
-  --border-strong: #334155;
-  --text: #f1f5f9;
-  --text-muted: #94a3b8;
-  --accent: #3b82f6;
-  --accent-hover: #60a5fa;
-  --accent-soft: rgba(59, 130, 246, 0.16);
-  --danger: #f87171;
-  --success: #4ade80;
-  --warning: #fbbf24;
+  --bg: #1b2026;
+  --surface: #232a32;
+  --surface-2: #2c3540;
+  --border: #363f4a;
+  --border-strong: #46505c;
+  --text: #e7ebef;
+  --text-muted: #97a1ab;
+  --accent: #6b8fae;
+  --accent-hover: #82a6c4;
+  --accent-soft: rgba(107, 143, 174, 0.16);
+  --danger: #c87878;
+  --success: #6ba87a;
+  --warning: #c0a060;
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.4);
   --shadow-md: 0 4px 14px rgba(0, 0, 0, 0.5);
   --shadow-lg: 0 16px 40px rgba(0, 0, 0, 0.6);
-  --edge-color: #475569;
+  --edge-color: #4a5560;
 }
 
 * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -312,6 +312,9 @@ button.del:hover { background: var(--surface-2); }
 
 /* ---------- Узлы ---------- */
 .device {
+  --node-bg: #eceff2;
+  --node-border: #9aa7b4;
+  --node-text: #3a4653;
   width: 100%;
   height: 100%;
   display: flex;
@@ -330,6 +333,12 @@ button.del:hover { background: var(--surface-2); }
   transition: box-shadow 0.15s, transform 0.1s;
   overflow: hidden;
 }
+
+[data-theme='dark'] .device {
+  --node-bg: #2c3540;
+  --node-border: #7a8794;
+  --node-text: #c0cbd4;
+}
 .device:hover { box-shadow: var(--shadow-md); }
 
 .device-name { font-weight: 600; }
@@ -342,15 +351,15 @@ button.del:hover { background: var(--surface-2); }
   margin-top: 3px;
 }
 
-.device-server { --node-bg: #eef4ff; --node-border: #3b82f6; --node-text: #1e3a8a; }
-.device-firewall { --node-bg: #fef2f2; --node-border: #ef4444; --node-text: #7f1d1d; }
-.device-network { --node-bg: #ecfdf5; --node-border: #10b981; --node-text: #064e3b; }
-.device-datacenter { --node-bg: #fffbeb; --node-border: #f59e0b; --node-text: #78350f; }
+.device-server { --node-bg: #e9eef3; --node-border: #6b8fae; --node-text: #2e4a63; }
+.device-firewall { --node-bg: #f2ecec; --node-border: #b08b8b; --node-text: #5a3d3d; }
+.device-network { --node-bg: #eaf0ea; --node-border: #8ba78b; --node-text: #33513a; }
+.device-datacenter { --node-bg: #f1eee6; --node-border: #a89872; --node-text: #57492e; }
 
-[data-theme='dark'] .device-server { --node-bg: #1e3a5f; --node-border: #3b82f6; --node-text: #bfdbfe; }
-[data-theme='dark'] .device-firewall { --node-bg: #3b1f1f; --node-border: #ef4444; --node-text: #fecaca; }
-[data-theme='dark'] .device-network { --node-bg: #0f3d2e; --node-border: #10b981; --node-text: #a7f3d0; }
-[data-theme='dark'] .device-datacenter { --node-bg: #3f2e12; --node-border: #f59e0b; --node-text: #fde68a; }
+[data-theme='dark'] .device-server { --node-bg: #24313e; --node-border: #6b8fae; --node-text: #b8cbd9; }
+[data-theme='dark'] .device-firewall { --node-bg: #332727; --node-border: #b08b8b; --node-text: #d9b8b8; }
+[data-theme='dark'] .device-network { --node-bg: #253326; --node-border: #8ba78b; --node-text: #b8d9b8; }
+[data-theme='dark'] .device-datacenter { --node-bg: #332d1f; --node-border: #a89872; --node-text: #d9c9a8; }
 
 /* подсветка маршрута */
 .react-flow__node.path-node > div {
@@ -662,3 +671,56 @@ button.del:hover { background: var(--surface-2); }
   font-size: 13px;
 }
 .admin-page a.link:hover { text-decoration: underline; }
+
+/* точки подключения (4 на объект) */
+.react-flow__handle {
+  width: 7px;
+  height: 7px;
+  background: var(--border-strong);
+  border: 2px solid var(--surface);
+}
+.react-flow__handle:hover { background: var(--accent); }
+
+/* экран входа */
+.login-page {
+  min-height: 100vh;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--bg);
+  font-family: ui-sans-serif, system-ui, sans-serif;
+}
+.login-card {
+  width: 340px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 28px;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  box-shadow: var(--shadow-lg);
+}
+.login-card h1 { font-size: 18px; font-weight: 700; }
+.login-card input {
+  padding: 9px 11px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 14px;
+  background: var(--surface);
+  color: var(--text);
+  font-family: inherit;
+}
+.login-card button {
+  padding: 9px;
+  border: none;
+  border-radius: var(--radius-sm);
+  background: var(--accent);
+  color: #fff;
+  font-size: 14px;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+}
+.login-card button:hover { background: var(--accent-hover); }
+.login-card .muted { color: var(--text-muted); font-size: 13px; }

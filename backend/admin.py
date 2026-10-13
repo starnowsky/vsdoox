@@ -160,3 +160,16 @@ def delete_user(uid):
     with SessionLocal() as s:
         s.execute(delete(LocalUser).where(LocalUser.id == uid))
         s.commit()
+
+
+# --- Авторизация локальных пользователей ---
+
+def user_login(username, password):
+    username = (username or '').strip()
+    if not username or not password:
+        return None
+    with SessionLocal() as s:
+        u = s.execute(select(LocalUser).where(LocalUser.username == username)).scalar_one_or_none()
+        if not u or not verify_secret(password, u.password_hash):
+            return None
+    return _create_session()

@@ -308,5 +308,39 @@ def admin_users_delete(uid):
     return jsonify({'ok': True})
 
 
+# ---------- Кастомные типы объектов ----------
+
+@app.route('/api/custom-types', methods=['GET'])
+def custom_types_list():
+    return jsonify({'types': storage.list_custom_types()})
+
+
+@app.route('/api/custom-types', methods=['POST'])
+def custom_types_create():
+    try:
+        tid = storage.create_custom_type((request.get_json(silent=True) or {}).get('name'))
+        return jsonify({'id': tid}), 201
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
+
+
+@app.route('/api/custom-types/<int:tid>', methods=['DELETE'])
+def custom_types_delete(tid):
+    storage.delete_custom_type(tid)
+    return jsonify({'ok': True})
+
+
+# ---------- Авторизация (логин/пароль) ----------
+
+@app.route('/api/auth/login', methods=['POST'])
+def auth_login():
+    data = request.get_json(silent=True) or {}
+    username = (data.get('username') or '').strip()
+    token = admin.user_login(username, data.get('password'))
+    if not token:
+        return jsonify({'error': 'Неверный логин или пароль'}), 401
+    return jsonify({'token': token, 'username': username})
+
+
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
