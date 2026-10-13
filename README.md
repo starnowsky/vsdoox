@@ -99,3 +99,15 @@ python -m unittest discover -s tests
 | POST | `/api/preview` | координаты для SVG-предпросмотра (старый флоу) |
 | POST | `/api/generate` | скачать `.vsdx` (старый флоу) |
 
+
+## Docker (запуск на другом сервере)
+
+Образ собирает фронтенд (Node) и backend (Python) в один контейнер. БД хранится в volume `vsdoox-data`.
+
+```bash
+docker compose up -d --build
+```
+
+Сервис будет доступен на `http://<server>:5000`. Переменная `VSDOOX_DB_URL` задаёт путь к БД (по умолчанию `sqlite:////data/vsdoox.db` — в volume).
+
+Первый запуск: открой `http://<server>:5000`, войди в **admin** (справа вверху), создай ключ, затем создай локального пользователя и войди под ним.

@@ -1,0 +1,10 @@
+.git
+.gitignore
+backend/.venv
+backend/__pycache__
+backend/*.pyc
+backend/*.db
+backend/*.db-wal
+backend/*.db-shm
+frontend/node_modules
+frontend/dist

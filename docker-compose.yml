@@ -1,0 +1,14 @@
+services:
+  vsdoox:
+    build: .
+    container_name: vsdoox
+    ports:
+      - "5000:5000"
+    volumes:
+      - vsdoox-data:/data
+    environment:
+      VSDOOX_DB_URL: sqlite:////data/vsdoox.db
+    restart: unless-stopped
+
+volumes:
+  vsdoox-data:
