@@ -213,6 +213,21 @@ def catalog_get(project_id):
     return jsonify(project)
 
 
+@app.route('/api/catalog/<int:project_id>', methods=['DELETE'])
+def catalog_delete(project_id):
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, is_admin = ident
+    project = storage.get_project(project_id)
+    if project is None:
+        return jsonify({'error': 'Проект не найден'}), 404
+    if not is_admin and project.get('owner') != username:
+        return jsonify({'error': 'Нет прав на удаление'}), 403
+    storage.delete_project(project_id)
+    return jsonify({'ok': True})
+
+
 @app.route('/api/objects', methods=['GET'])
 def objects_list():
     ident = _current_identity()

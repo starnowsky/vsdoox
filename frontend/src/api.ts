@@ -102,6 +102,10 @@ export function getCatalogProject(id: number): Promise<Project> {
   return request('/api/catalog/' + id);
 }
 
+export function deleteCatalogProject(id: number): Promise<{ ok: boolean }> {
+  return request('/api/catalog/' + id, { method: 'DELETE' });
+}
+
 export function analyzePath(
   nodes: GraphNode[],
   links: GraphLink[],

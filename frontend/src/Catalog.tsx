@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { catalogProjects, downloadConnectionsXlsx } from './api';
+import { catalogProjects, deleteCatalogProject, downloadConnectionsXlsx } from './api';
 import type { CatalogFolder, CatalogProject } from './api';
 
 function fmtDate(iso?: string): string {
@@ -21,6 +21,7 @@ function downloadBlob(blob: Blob, name: string) {
 export default function Catalog() {
   const [folders, setFolders] = useState<CatalogFolder[]>([]);
   const [viewer, setViewer] = useState('');
+  const [isAdmin, setIsAdmin] = useState(false);
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [search, setSearch] = useState('');
@@ -33,6 +34,7 @@ export default function Catalog() {
       const res = await catalogProjects();
       setFolders(res.folders);
       setViewer(res.viewer);
+      setIsAdmin(res.is_admin);
     } catch (e) {
       setError((e as Error).message);
     } finally {
@@ -63,6 +65,17 @@ export default function Catalog() {
     try {
       const blob = await downloadConnectionsXlsx(p.id);
       downloadBlob(blob, p.name + ' - связи.xlsx');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const removeProject = async (p: CatalogProject) => {
+    if (!window.confirm(`Удалить схему «${p.name}»?`)) return;
+    try {
+      await deleteCatalogProject(p.id);
+      setSelected(null);
+      await load();
     } catch (e) {
       setError((e as Error).message);
     }
@@ -130,6 +143,9 @@ export default function Catalog() {
               <div className="catalog-actions">
                 <button className="primary" onClick={() => openProject(selected.id)}>Открыть</button>
                 <button onClick={() => exportExcel(selected)} title="Таблица протоколов/портов (Excel)">Excel</button>
+                {(isAdmin || selected.owner === viewer) && (
+                  <button className="del" onClick={() => removeProject(selected)}>Удалить</button>
+                )}
               </div>
             </>
           )}

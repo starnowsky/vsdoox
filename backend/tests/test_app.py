@@ -406,5 +406,81 @@ class CatalogFoldersObjectsTest(unittest.TestCase):
         self.assertEqual(proj['connections'][0]['description'], 'SSH доступ')
 
 
+class RegressionTests(unittest.TestCase):
+    """Регрессионные тесты: позиции узлов, удаление из каталога, структура .vsdx."""
+
+    def setUp(self):
+        self.client = appmod.app.test_client()
+
+    def _admin_token(self):
+        r = self.client.post('/api/admin/setup', json={'key': 'secret-key'})
+        if r.status_code == 201:
+            return r.get_json()['token']
+        return self.client.post('/api/admin/login', json={'key': 'secret-key'}).get_json()['token']
+
+    def _login(self, username):
+        return self.client.post('/api/auth/login', json={'username': username, 'password': 'p'}).get_json()['token']
+
+    def test_node_positions_roundtrip(self):
+        r = self.client.post('/api/projects', json={'name': 'Pos', 'owner': 'alice'})
+        pid = r.get_json()['id']
+        nodes = [
+            {'id': 'dc1', 'type': 'datacenter', 'name': 'ЦОД', 'parent_id': None, 'x': 30, 'y': 30, 'attributes': {}},
+            {'id': 'net1', 'type': 'network', 'name': 'Сеть', 'parent_id': 'dc1', 'x': 14, 'y': 76, 'attributes': {}},
+            {'id': 'srv1', 'type': 'server', 'name': 'Сервер', 'parent_id': 'net1', 'x': 8, 'y': 38, 'attributes': {}},
+        ]
+        self.client.put(f'/api/projects/{pid}', json={'name': 'Pos', 'nodes': nodes, 'links': [], 'connections': []})
+        proj = self.client.get(f'/api/projects/{pid}').get_json()
+        by_id = {n['id']: n for n in proj['nodes']}
+        self.assertEqual((by_id['dc1']['x'], by_id['dc1']['y']), (30.0, 30.0))
+        self.assertEqual(by_id['net1']['parent_id'], 'dc1')
+        self.assertEqual((by_id['net1']['x'], by_id['net1']['y']), (14.0, 76.0))
+        self.assertEqual(by_id['srv1']['parent_id'], 'net1')
+        self.assertEqual((by_id['srv1']['x'], by_id['srv1']['y']), (8.0, 38.0))
+
+    def test_catalog_delete_ownership(self):
+        admin_tok = self._admin_token()
+        g = self.client.post('/api/admin/groups', json={'name': 'del-team'},
+                             headers={'X-Admin-Token': admin_tok}).get_json()['id']
+        self.client.post('/api/admin/users', json={'username': 'u_own', 'password': 'p', 'group_id': g},
+                         headers={'X-Admin-Token': admin_tok})
+        self.client.post('/api/admin/users', json={'username': 'u_other', 'password': 'p', 'group_id': g},
+                         headers={'X-Admin-Token': admin_tok})
+        own_tok = self._login('u_own')
+        other_tok = self._login('u_other')
+        pid = self.client.post('/api/projects', json={'name': 'Del', 'owner': 'u_own'}).get_json()['id']
+
+        r = self.client.delete(f'/api/catalog/{pid}', headers={'X-User-Token': other_tok})
+        self.assertEqual(r.status_code, 403)
+
+        r = self.client.delete(f'/api/catalog/{pid}', headers={'X-User-Token': own_tok})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(self.client.get(f'/api/projects/{pid}').status_code, 404)
+
+    def test_vsdx_contains_required_parts(self):
+        import io as _io
+        import zipfile
+        nodes = [{'id': 'A', 'label': 'A'}, {'id': 'B', 'label': 'B'}]
+        r = self.client.post('/api/generate', json={'nodes': nodes, 'edges': [{'from': 'A', 'to': 'B'}], 'layout': 'grid', 'title': 'T'})
+        self.assertEqual(r.status_code, 200)
+        names = set(zipfile.ZipFile(_io.BytesIO(r.data)).namelist())
+        self.assertIn('visio/masters/masters.xml', names)
+        self.assertIn('visio/windows.xml', names)
+        self.assertIn('visio/pages/page1.xml', names)
+
+    def test_export_graph_vsdx_contains_parts(self):
+        import io as _io
+        import zipfile
+        r = self.client.post('/api/export', json={
+            'title': 'T',
+            'nodes': [{'id': 'srvA', 'type': 'server', 'name': 'A', 'x': 0, 'y': 0, 'w': 130, 'h': 48, 'attributes': {}}],
+            'connections': [],
+        })
+        self.assertEqual(r.status_code, 200)
+        names = set(zipfile.ZipFile(_io.BytesIO(r.data)).namelist())
+        self.assertIn('visio/masters/masters.xml', names)
+        self.assertIn('visio/windows.xml', names)
+
+
 if __name__ == '__main__':
     unittest.main()

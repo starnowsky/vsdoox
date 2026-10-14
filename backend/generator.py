@@ -161,6 +161,9 @@ class VisioGenerator:
             # visio/pages/page1.xml
             z.writestr('visio/pages/page1.xml',
                        self._page_xml(nodes, edges, positions))
+            z.writestr('visio/masters/masters.xml', self._masters_xml())
+            z.writestr('visio/masters/_rels/masters.xml.rels', self._masters_rels())
+            z.writestr('visio/windows.xml', self._windows_xml())
 
         buf.seek(0)
         return buf.read()
@@ -175,6 +178,8 @@ class VisioGenerator:
   <Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>
   <Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>
   <Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>
+  <Override PartName="/visio/masters/masters.xml" ContentType="application/vnd.ms-visio.masters+xml"/>
+  <Override PartName="/visio/windows.xml" ContentType="application/vnd.ms-visio.windows+xml"/>
   <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
   <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
 </Types>'''
@@ -191,6 +196,8 @@ class VisioGenerator:
         return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
   <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/pages" Target="pages/pages.xml"/>
+  <Relationship Id="rId2" Type="http://schemas.microsoft.com/visio/2010/relationships/windows" Target="windows.xml"/>
+  <Relationship Id="rId3" Type="http://schemas.microsoft.com/visio/2010/relationships/masters" Target="masters/masters.xml"/>
 </Relationships>'''
 
     def _pages_rels(self):
@@ -210,6 +217,22 @@ class VisioGenerator:
     <Shapes/>
   </DocumentSheet>
 </VisioDocument>'''
+
+    def _masters_xml(self):
+        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Masters xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+</Masters>'''
+
+    def _masters_rels(self):
+        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
+</Relationships>'''
+
+    def _windows_xml(self):
+        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
+<Windows xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve" ClientWidth="1239" ClientHeight="846" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
+  <Window ID="0" WindowType="Drawing" WindowState="1073741824" WindowLeftX="0" WindowTopY="0" WindowWidth="1239" WindowHeight="846" ContainerType="Page" Page="0" ViewScale="1" ViewCenterX="5.5" ViewCenterY="4.25"/>
+</Windows>'''
 
     def _pages_xml(self):
         page_name = _xml_escape(self.title or 'Page-1')
@@ -426,6 +449,9 @@ class VisioGenerator:
             z.writestr('visio/pages/_rels/pages.xml.rels', self._pages_rels())
             z.writestr('visio/pages/page1.xml',
                        self._graph_page_xml(nodes, connections, visio_pos))
+            z.writestr('visio/masters/masters.xml', self._masters_xml())
+            z.writestr('visio/masters/_rels/masters.xml.rels', self._masters_rels())
+            z.writestr('visio/windows.xml', self._windows_xml())
         buf.seek(0)
         return buf.read()
 

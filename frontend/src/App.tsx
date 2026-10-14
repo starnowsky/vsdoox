@@ -463,11 +463,23 @@ export default function App() {
         : [...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)])].filter(
             (id) => id !== c.source_id && id !== c.target_id,
           );
-      const waypoints = fwIds.map((id) => {
+      // Проход сквозь МСЭ — через края (вход/выход), а не через центр узла.
+      const horizontalPass = Math.abs(tc.x - sc.x) >= Math.abs(tc.y - sc.y);
+      const passDir = horizontalPass ? (tc.x >= sc.x ? 1 : -1) : (tc.y >= sc.y ? 1 : -1);
+      const waypoints: Array<{ x: number; y: number }> = [];
+      for (const id of fwIds) {
         const p = abs.get(id) ?? { x: 0, y: 0 };
         const s = sizes.get(id) ?? { w: 100, h: 50 };
-        return { x: p.x + s.w / 2, y: p.y + s.h / 2 };
-      });
+        const cx = p.x + s.w / 2;
+        const cy = p.y + s.h / 2;
+        if (horizontalPass) {
+          waypoints.push({ x: cx - passDir * (s.w / 2), y: cy });
+          waypoints.push({ x: cx + passDir * (s.w / 2), y: cy });
+        } else {
+          waypoints.push({ x: cx, y: cy - passDir * (s.h / 2) });
+          waypoints.push({ x: cx, y: cy + passDir * (s.h / 2) });
+        }
+      }
 
       return {
         id: c.id,
