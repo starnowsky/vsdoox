@@ -59,8 +59,9 @@ export default function Catalog() {
 
   return (
     <div className="admin-page">
+      <div className="banner"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <div className="admin-header">
-        <h1>vsdoox · каталог проектов</h1>
+        <h1><img className="brand-icon" src="/vibeicon.jpg" alt="" /> VibeDraw · каталог проектов</h1>
         <div className="admin-header-actions">
           {viewer && <span className="muted">{viewer}</span>}
           <a href="/" className="link">← к схеме</a>

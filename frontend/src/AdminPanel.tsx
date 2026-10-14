@@ -224,8 +224,9 @@ export default function AdminPanel() {
 
   return (
     <div className="admin-page">
+      <div className="banner"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <div className="admin-header">
-        <h1>vsdoox · администрирование</h1>
+        <h1><img className="brand-icon" src="/vibeicon.jpg" alt="" /> VibeDraw · администрирование</h1>
         <div className="admin-header-actions">
           <a href="/" className="link">← к схеме</a>
           <button onClick={handleLogout}>Выйти</button>

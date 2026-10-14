@@ -825,7 +825,8 @@ export default function App() {
     return (
       <div className="login-page">
         <div className="login-card">
-          <h1>vsdoox · сетевые схемы</h1>
+          <img className="login-icon" src="/vibeicon.jpg" alt="VibeDraw" />
+          <h1>VibeDraw · сетевые схемы</h1>
           <p className="muted">Вход по логину и паролю</p>
           <input value={loginUser} onChange={(e) => setLoginUser(e.target.value)} placeholder="Логин" autoFocus />
           <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} placeholder="Пароль" />
@@ -845,11 +846,12 @@ export default function App() {
         <button className="admin-btn" onClick={() => window.open('/catalog', '_blank')} title="Каталог проектов">каталог</button>
         <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
       </div>
+      <div className="banner-fixed"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <aside className="sidebar">
         <div className="sidebar-header">
           <h1>
-            <span className="logo-mark">V</span>
-            vsdoox · сетевые схемы
+            <img className="logo-mark-img" src="/vibeicon.jpg" alt="VibeDraw" />
+            VibeDraw · сетевые схемы
           </h1>
         </div>
 
