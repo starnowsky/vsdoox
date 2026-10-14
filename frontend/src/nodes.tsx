@@ -32,7 +32,15 @@ function subtitleFor(
   return '';
 }
 
-function NodeHandles() {
+function NodeHandles({ rightOnly = false }: { rightOnly?: boolean }) {
+  if (rightOnly) {
+    return (
+      <>
+        <Handle id="s-right" type="source" position={Position.Right} />
+        <Handle id="t-right" type="target" position={Position.Right} />
+      </>
+    );
+  }
   return (
     <>
       <Handle id="s-top" type="source" position={Position.Top} />
@@ -56,7 +64,7 @@ export function DeviceNode(props: NodeProps<Node<DeviceData>>) {
 
   return (
     <div className={'device device-' + type}>
-      <NodeHandles />
+      <NodeHandles rightOnly={type === 'server'} />
       <div className="device-name">{icon} {name}</div>
       {subtitle ? <div className="device-subtitle">{subtitle}</div> : null}
       <div className="device-type">{typeLabel}</div>

@@ -17,7 +17,7 @@ export interface RouteItem {
   target: Pt;
 }
 
-const GAP = 16; // отступ между параллельными линиями
+const GAP = 14; // отступ = 7 толщин линии (толщина 2px)
 const R = 6; // радиус «мостика» на пересечении
 
 function orthoPath(source: Pt, waypoints: Pt[], target: Pt): Pt[] {
@@ -137,12 +137,42 @@ function midpointAlongPath(path: Pt[]): Pt {
 }
 
 export function routeConnections(items: RouteItem[]): Array<{ id: string; d: string; labelPos: Pt }> {
-  const paths = items.map((it) => orthoPath(it.source, it.waypoints, it.target));
+  // Направление прохода (горизонтальное/вертикальное) для каждой линии.
+  const passH = items.map((it) => Math.abs(it.target.x - it.source.x) >= Math.abs(it.target.y - it.source.y));
 
-  // Группировка по совпадающему маршруту и смещение параллельных линий.
+  // Лейны: линии, проходящие через один и тот же МСЭ, разводим, чтобы не ложились друг на друга.
+  const fwGroups = new Map<string, number[]>();
+  items.forEach((it, i) => {
+    it.fwIds.forEach((fwId) => {
+      if (!fwGroups.has(fwId)) fwGroups.set(fwId, []);
+      fwGroups.get(fwId)!.push(i);
+    });
+  });
+  const laneMap = new Map<string, number>();
+  for (const [fwId, lines] of fwGroups) {
+    const n = lines.length;
+    lines.forEach((lineIdx, j) => {
+      laneMap.set(`${lineIdx}:${fwId}`, (j - (n - 1) / 2) * GAP);
+    });
+  }
+
+  const adjusted = items.map((it, i) => {
+    const h = passH[i];
+    return it.waypoints.map((wp, k) => {
+      const fwId = it.fwIds[Math.floor(k / 2)];
+      const lane = laneMap.get(`${i}:${fwId}`) ?? 0;
+      if (h) return { x: wp.x, y: wp.y + lane };
+      return { x: wp.x + lane, y: wp.y };
+    });
+  });
+
+  const paths = items.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
+
+  // Смещение одинаковых маршрутов (одинаковая пара узлов без МСЭ).
   const offsets: number[] = new Array(items.length).fill(0);
   const groups = new Map<string, number[]>();
   items.forEach((it, i) => {
+    if (it.fwIds.length > 0) return; // уже разведены лейнами
     const sig = signature(it);
     if (!groups.has(sig)) groups.set(sig, []);
     groups.get(sig)!.push(i);

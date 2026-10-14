@@ -486,7 +486,7 @@ class VisioGenerator:
                 continue
             label = conn.get('protocol') or 'any'
             if conn.get('port'):
-                label += ':' + str(conn.get('port'))
+                label += '\\' + str(conn.get('port'))
             shapes_xml.append(self._graph_connector_xml(
                 shape_id, positions[s], positions[t], label, conn.get('color')))
             shape_id += 1
@@ -552,18 +552,27 @@ class VisioGenerator:
             t = min(tx, ty)
             return px + dx * t, py + dy * t
 
-        cx1, cy1 = clip(x1, y1, x2, y2, from_pos['w'], from_pos['h'])
-        cx2, cy2 = clip(x2, y2, x1, y1, to_pos['w'], to_pos['h'])
+        sx, sy = clip(x1, y1, x2, y2, from_pos['w'], from_pos['h'])
+        tx_, ty_ = clip(x2, y2, x1, y1, to_pos['w'], to_pos['h'])
 
-        pin_x = (cx1 + cx2) / 2
-        pin_y = (cy1 + cy2) / 2
-        w = max(abs(cx2 - cx1), 0.001)
-        h = max(abs(cy2 - cy1), 0.001)
+        # Ортогональный маршрут (Г-образный): горизонталь затем вертикаль.
+        pts = [(sx, sy), (tx_, sy), (tx_, ty_)]
 
-        lx1 = cx1 - (pin_x - w / 2)
-        ly1 = cy1 - (pin_y - h / 2)
-        lx2 = cx2 - (pin_x - w / 2)
-        ly2 = cy2 - (pin_y - h / 2)
+        xs = [p[0] for p in pts]
+        ys = [p[1] for p in pts]
+        pin_x = (min(xs) + max(xs)) / 2
+        pin_y = (min(ys) + max(ys)) / 2
+        w = max(max(xs) - min(xs), 0.001)
+        h = max(max(ys) - min(ys), 0.001)
+
+        lx = [round(p[0] - (pin_x - w / 2), 3) for p in pts]
+        ly = [round(p[1] - (pin_y - h / 2), 3) for p in pts]
+
+        rows = ''.join(
+            f'<Row T="{"MoveTo" if i == 0 else "LineTo"}" IX="{i + 1}">'
+            f'<Cell N="X" V="{lx[i]}"/><Cell N="Y" V="{ly[i]}"/></Row>'
+            for i in range(len(pts))
+        )
 
         line_color = _safe_color(color, '#666666')
         text_xml = f'      <Text>{_xml_escape(label)}</Text>\n' if label else ''
@@ -577,14 +586,7 @@ class VisioGenerator:
       <Cell N="LocPinY" V="{h/2}"/>
       <Cell N="Angle" V="0"/>
       <Section N="Geometry" IX="0">
-        <Row T="MoveTo" IX="1">
-          <Cell N="X" V="{lx1}"/>
-          <Cell N="Y" V="{ly1}"/>
-        </Row>
-        <Row T="LineTo" IX="2">
-          <Cell N="X" V="{lx2}"/>
-          <Cell N="Y" V="{ly2}"/>
-        </Row>
+        {rows}
       </Section>
       <Section N="Line">
         <Cell N="LineColor" V="{line_color}"/>

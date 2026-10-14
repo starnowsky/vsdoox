@@ -454,8 +454,10 @@ export default function App() {
       const ts = sizes.get(c.target_id) ?? { w: 130, h: 48 };
       const sc = { x: sp.x + ss.w / 2, y: sp.y + ss.h / 2 };
       const tc = { x: tp.x + ts.w / 2, y: tp.y + ts.h / 2 };
-      const sourceSide = closestSide(sc, tc);
-      const targetSide = closestSide(tc, sc);
+      const sourceType = nodes.find((n) => n.id === c.source_id)?.type ?? 'server';
+      const targetType = nodes.find((n) => n.id === c.target_id)?.type ?? 'server';
+      const sourceSide = sourceType === 'server' ? 'right' : closestSide(sc, tc);
+      const targetSide = targetType === 'server' ? 'right' : closestSide(tc, sc);
 
       const parentId = c.attributes && typeof c.attributes.parent_id === 'string' ? c.attributes.parent_id : undefined;
       const fwIds = parentId
