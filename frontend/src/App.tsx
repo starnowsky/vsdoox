@@ -433,7 +433,7 @@ export default function App() {
       const group = groups.get(key) ?? [c];
       const parallelIndex = group.findIndex((g) => g.id === c.id);
       const color = connColor(c);
-      const label = (c.protocol ?? 'any') + (c.port ? ':' + c.port : '');
+      const label = (c.protocol ?? 'any') + (c.port ? '\\' + c.port : '');
       const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
 
       const sp = abs.get(c.source_id) ?? { x: 0, y: 0 };
@@ -462,10 +462,10 @@ export default function App() {
         target: c.target_id,
         sourceHandle: 's-' + closestSide(sc, tc),
         targetHandle: 't-' + closestSide(tc, sc),
-        type: hasWaypoints ? 'waypoint' : 'smoothstep',
+        type: hasWaypoints ? 'waypoint' : 'step',
         label,
         data: hasWaypoints ? { waypoints } : undefined,
-        pathOptions: hasWaypoints ? undefined : { offset: 30 + parallelIndex * 40, borderRadius: 8 },
+        pathOptions: hasWaypoints ? undefined : { offset: 30 + parallelIndex * 40 },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
@@ -1004,7 +1004,7 @@ export default function App() {
                       <button className="link" onClick={() => showConnection(c)}>
                         {nodeName(c.source_id)} → {nodeName(c.target_id)}
                         <span className="conn-meta">
-                          {c.protocol ?? 'any'}{c.port ? ':' + c.port : ''}
+                          {c.protocol ?? 'any'}{c.port ? '\\' + c.port : ''}
                           {c.description ? ' · ' + c.description : ''}
                         </span>
                       </button>
@@ -1178,7 +1178,7 @@ export default function App() {
                       <tr key={c.id}>
                         <td>{nodeName(c.source_id)}</td>
                         <td>{nodeName(c.target_id)}</td>
-                        <td>{(c.protocol ?? 'any') + (c.port ? ':' + c.port : '')}</td>
+                        <td>{(c.protocol ?? 'any') + (c.port ? '\\' + c.port : '')}</td>
                         <td>{c.description ?? ''}</td>
                       </tr>
                     ))}
