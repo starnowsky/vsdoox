@@ -4,7 +4,8 @@ import type { Edge, Node, NodeTypes } from '@xyflow/react';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
-import { WaypointEdge } from './edges';
+import { OrthoEdge } from './edges';
+import { routeConnections } from './routing';
 import {
   authLogin,
   createCustomType,
@@ -32,7 +33,7 @@ const BUILTIN_NODE_TYPES: NodeTypes = {
   datacenter: DatacenterNode,
 };
 
-const edgeTypes = { waypoint: WaypointEdge };
+const edgeTypes = { ortho: OrthoEdge };
 
 const DEFAULT_NAMES: Record<string, string> = {
   server: 'SRV',
@@ -162,6 +163,25 @@ function closestSide(from: { x: number; y: number }, to: { x: number; y: number 
   const dy = to.y - from.y;
   if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
   return dy > 0 ? 'bottom' : 'top';
+}
+
+function handlePos(
+  center: { x: number; y: number },
+  size: { w: number; h: number },
+  side: string,
+): { x: number; y: number } {
+  switch (side) {
+    case 'right':
+      return { x: center.x + size.w / 2, y: center.y };
+    case 'left':
+      return { x: center.x - size.w / 2, y: center.y };
+    case 'top':
+      return { x: center.x, y: center.y - size.h / 2 };
+    case 'bottom':
+      return { x: center.x, y: center.y + size.h / 2 };
+    default:
+      return center;
+  }
 }
 
 function absolutePositions(nodes: Node<DeviceData>[]): Map<string, { x: number; y: number }> {
@@ -422,50 +442,59 @@ export default function App() {
     const pathNodes = new Set(pathResult?.path ?? []);
     const abs = absolutePositions(nodes);
     const sizes = computeSizes(nodes);
-    const groups = new Map<string, Interaction[]>();
-    connections.forEach((c) => {
-      const key = [c.source_id, c.target_id].sort().join('->');
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)!.push(c);
-    });
-    return connections.map((c) => {
-      const key = [c.source_id, c.target_id].sort().join('->');
-      const group = groups.get(key) ?? [c];
-      const parallelIndex = group.findIndex((g) => g.id === c.id);
-      const color = connColor(c);
-      const label = (c.protocol ?? 'any') + (c.port ? '\\' + c.port : '');
-      const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
 
+    const routeItems = connections.map((c) => {
       const sp = abs.get(c.source_id) ?? { x: 0, y: 0 };
       const tp = abs.get(c.target_id) ?? { x: 0, y: 0 };
       const ss = sizes.get(c.source_id) ?? { w: 130, h: 48 };
       const ts = sizes.get(c.target_id) ?? { w: 130, h: 48 };
       const sc = { x: sp.x + ss.w / 2, y: sp.y + ss.h / 2 };
       const tc = { x: tp.x + ts.w / 2, y: tp.y + ts.h / 2 };
+      const sourceSide = closestSide(sc, tc);
+      const targetSide = closestSide(tc, sc);
 
       const parentId = c.attributes && typeof c.attributes.parent_id === 'string' ? c.attributes.parent_id : undefined;
       const fwIds = parentId
         ? [parentId]
-        : [...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)])];
-      const waypoints = fwIds
-        .filter((id) => id !== c.source_id && id !== c.target_id)
-        .map((id) => {
-          const p = abs.get(id) ?? { x: 0, y: 0 };
-          const s = sizes.get(id) ?? { w: 100, h: 50 };
-          return { x: p.x + s.w / 2, y: p.y + s.h / 2 };
-        });
-      const hasWaypoints = waypoints.length > 0;
+        : [...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)])].filter(
+            (id) => id !== c.source_id && id !== c.target_id,
+          );
+      const waypoints = fwIds.map((id) => {
+        const p = abs.get(id) ?? { x: 0, y: 0 };
+        const s = sizes.get(id) ?? { w: 100, h: 50 };
+        return { x: p.x + s.w / 2, y: p.y + s.h / 2 };
+      });
 
+      return {
+        id: c.id,
+        sourceId: c.source_id,
+        targetId: c.target_id,
+        fwIds,
+        source: handlePos(sc, ss, sourceSide),
+        waypoints,
+        target: handlePos(tc, ts, targetSide),
+        sourceSide,
+        targetSide,
+      };
+    });
+
+    const routed = routeConnections(routeItems);
+    const dById = new Map(routed.map((r) => [r.id, r.d]));
+
+    return connections.map((c, idx) => {
+      const item = routeItems[idx];
+      const color = connColor(c);
+      const label = (c.protocol ?? 'any') + (c.port ? '\\' + c.port : '');
+      const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
       return {
         id: 'conn-' + c.id,
         source: c.source_id,
         target: c.target_id,
-        sourceHandle: 's-' + closestSide(sc, tc),
-        targetHandle: 't-' + closestSide(tc, sc),
-        type: hasWaypoints ? 'waypoint' : 'step',
+        sourceHandle: 's-' + item.sourceSide,
+        targetHandle: 't-' + item.targetSide,
+        type: 'ortho',
         label,
-        data: hasWaypoints ? { waypoints } : undefined,
-        pathOptions: hasWaypoints ? undefined : { offset: 30 + parallelIndex * 40 },
+        data: { d: dById.get(c.id) ?? '' },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },

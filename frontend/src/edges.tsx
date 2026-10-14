@@ -1,26 +1,71 @@
-import { BaseEdge } from '@xyflow/react';
+import { BaseEdge, EdgeLabelRenderer } from '@xyflow/react';
 import type { EdgeProps } from '@xyflow/react';
 
-interface Waypoint {
-  x: number;
-  y: number;
+interface LabelStyle {
+  fill?: string;
+  fontSize?: number;
+  fontWeight?: number;
 }
 
-export function WaypointEdge(props: EdgeProps) {
-  const { sourceX, sourceY, targetX, targetY, data } = props;
-  const waypoints = (data?.waypoints as Waypoint[]) ?? [];
-  const points = [
-    { x: sourceX, y: sourceY },
-    ...waypoints,
-    { x: targetX, y: targetY },
-  ];
-  let d = `M ${points[0].x},${points[0].y}`;
-  // Ортогональная маршрутизация: каждый сегмент — только горизонталь/вертикаль.
-  for (let i = 1; i < points.length; i++) {
-    const prev = points[i - 1];
-    const cur = points[i];
-    d += ` L ${cur.x},${prev.y}`;
-    d += ` L ${cur.x},${cur.y}`;
-  }
-  return <BaseEdge {...props} path={d} />;
+interface LabelBgStyle {
+  fill?: string;
 }
+
+export function OrthoEdge(props: EdgeProps) {
+  const {
+    id,
+    sourceX,
+    sourceY,
+    targetX,
+    targetY,
+    data,
+    label,
+    labelStyle,
+    labelBgStyle,
+    labelBgPadding,
+    labelBgBorderRadius,
+    markerEnd,
+  } = props;
+
+  const d = (data?.d as string) ?? '';
+  const midX = (sourceX + targetX) / 2;
+  const midY = (sourceY + targetY) / 2;
+
+  const ls = labelStyle as LabelStyle | undefined;
+  const bg = labelBgStyle as LabelBgStyle | undefined;
+  const pad = labelBgPadding as [number, number] | undefined;
+
+  return (
+    <>
+      <BaseEdge id={id} path={d} markerEnd={markerEnd} />
+      {label ? (
+        <EdgeLabelRenderer>
+          <div
+            className="nodrag nopan"
+            style={{
+              position: 'absolute',
+              transform: `translate(-50%, -50%) translate(${midX}px, ${midY}px)`,
+              pointerEvents: 'all',
+              background: bg?.fill ?? 'transparent',
+              borderRadius: typeof labelBgBorderRadius === 'number' ? labelBgBorderRadius : 0,
+              padding: pad ? `${pad[1]}px ${pad[0]}px` : undefined,
+            }}
+          >
+            <span
+              style={{
+                display: 'block',
+                color: ls?.fill ?? 'var(--text)',
+                fontSize: ls?.fontSize ?? 11,
+                fontWeight: ls?.fontWeight ?? 600,
+                lineHeight: 1.2,
+              }}
+            >
+              {label}
+            </span>
+          </div>
+        </EdgeLabelRenderer>
+      ) : null}
+    </>
+  );
+}
+
