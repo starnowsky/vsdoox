@@ -859,3 +859,72 @@ button.del:hover { background: var(--surface-2); }
   border-radius: 8px;
   background: #fff;
 }
+
+/* VibeDraw: баннер в шапке (сайдбар/страницы) */
+.sidebar-banner {
+  display: block;
+  width: 100%;
+  height: auto;
+  border-radius: 8px;
+  background: #fff;
+}
+.page-banner {
+  display: block;
+  height: 44px;
+  width: auto;
+  border-radius: 8px;
+  background: #fff;
+}
+
+/* админка: вкладки */
+.admin-tabs {
+  max-width: 640px;
+  margin-bottom: 16px;
+}
+.admin-tabs .tabs { max-width: 420px; }
+
+/* каталог: реестр слева + детали справа */
+.catalog-layout {
+  display: grid;
+  grid-template-columns: 320px 1fr;
+  gap: 20px;
+  align-items: start;
+}
+.catalog-registry {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px;
+  max-height: calc(100vh - 120px);
+  overflow-y: auto;
+  position: sticky;
+  top: 12px;
+}
+.registry-list ul { list-style: none; margin: 0; }
+.registry-list li { margin: 2px 0; }
+.registry-list .registry-item {
+  width: 100%;
+  text-align: left;
+  padding: 6px 9px;
+  margin-top: 0;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+  background: none;
+  color: var(--text);
+  font-size: 13px;
+}
+.registry-list .registry-item:hover { background: var(--surface-2); }
+.registry-list .registry-item.active {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  font-weight: 600;
+}
+.catalog-detail {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 20px;
+  min-height: 240px;
+}
+.catalog-detail h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
+.catalog-detail .catalog-meta { line-height: 1.7; margin-bottom: 14px; }

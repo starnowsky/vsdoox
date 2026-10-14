@@ -1,6 +1,6 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { catalogProjects, downloadConnectionsXlsx } from './api';
-import type { CatalogFolder } from './api';
+import type { CatalogFolder, CatalogProject } from './api';
 
 function fmtDate(iso?: string): string {
   if (!iso) return '';
@@ -23,6 +23,8 @@ export default function Catalog() {
   const [viewer, setViewer] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
+  const [search, setSearch] = useState('');
+  const [selected, setSelected] = useState<CatalogProject | null>(null);
 
   const load = async () => {
     setLoading(true);
@@ -42,26 +44,34 @@ export default function Catalog() {
     load();
   }, []);
 
+  const filteredFolders = useMemo(() => {
+    const q = search.trim().toLowerCase();
+    if (!q) return folders;
+    return folders
+      .map((f) => ({
+        ...f,
+        projects: f.projects.filter((p) => p.name.toLowerCase().includes(q)),
+      }))
+      .filter((f) => f.projects.length > 0);
+  }, [folders, search]);
+
   const openProject = (id: number) => {
     window.location.href = '/?project=' + id;
   };
 
-  const exportExcel = async (id: number, name: string) => {
+  const exportExcel = async (p: CatalogProject) => {
     try {
-      const blob = await downloadConnectionsXlsx(id);
-      downloadBlob(blob, name + ' - связи.xlsx');
+      const blob = await downloadConnectionsXlsx(p.id);
+      downloadBlob(blob, p.name + ' - связи.xlsx');
     } catch (e) {
       setError((e as Error).message);
     }
   };
 
-  const total = folders.reduce((acc, f) => acc + f.projects.length, 0);
-
   return (
     <div className="admin-page">
-      <div className="banner"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <div className="admin-header">
-        <h1><img className="brand-icon" src="/vibeicon.jpg" alt="" /> VibeDraw · каталог проектов</h1>
+        <img className="page-banner" src="/vibelogo.jpg" alt="VibeDraw" />
         <div className="admin-header-actions">
           {viewer && <span className="muted">{viewer}</span>}
           <a href="/" className="link">← к схеме</a>
@@ -69,35 +79,62 @@ export default function Catalog() {
       </div>
 
       {error && <div className="error">{error}</div>}
-      {!error && !loading && total === 0 && (
-        <div className="muted">Нет доступных проектов</div>
-      )}
 
-      {folders.map((f) => (
-        <div className="folder" key={f.id ?? 'none'}>
-          <div className="folder-header">
-            <span>📁 {f.name}</span>
-            <span className="catalog-meta muted">{f.projects.length}</span>
-          </div>
-          <ul className="admin-list">
-            {f.projects.map((p) => (
-              <li key={p.id}>
-                <div className="catalog-item">
-                  <span className="catalog-name">{p.name}</span>
-                  <span className="catalog-meta">
-                    {p.owner ?? '—'} · {p.group_name ?? 'публичный'}
-                  </span>
-                  <span className="catalog-meta muted">{fmtDate(p.updated_at)}</span>
+      <div className="catalog-layout">
+        <aside className="catalog-registry">
+          <input
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            placeholder="Поиск по названию"
+          />
+          {!loading && filteredFolders.length === 0 && (
+            <div className="muted">Ничего не найдено</div>
+          )}
+          <div className="registry-list">
+            {filteredFolders.map((f) => (
+              <div className="folder" key={f.id ?? 'none'}>
+                <div className="folder-header">
+                  <span>📁 {f.name}</span>
+                  <span className="catalog-meta muted">{f.projects.length}</span>
                 </div>
-                <div className="catalog-actions">
-                  <button className="primary" onClick={() => openProject(p.id)}>Открыть</button>
-                  <button onClick={() => exportExcel(p.id, p.name)} title="Таблица связей (Excel)">Excel</button>
-                </div>
-              </li>
+                <ul>
+                  {f.projects.map((p) => (
+                    <li key={p.id}>
+                      <button
+                        className={'registry-item' + (selected?.id === p.id ? ' active' : '')}
+                        onClick={() => setSelected(p)}
+                      >
+                        {p.name}
+                      </button>
+                    </li>
+                  ))}
+                </ul>
+              </div>
             ))}
-          </ul>
-        </div>
-      ))}
+          </div>
+        </aside>
+
+        <main className="catalog-detail">
+          {!selected ? (
+            <div className="muted">Выберите схему слева</div>
+          ) : (
+            <>
+              <h2>{selected.name}</h2>
+              <p className="catalog-meta">
+                Владелец: {selected.owner ?? '—'}
+                <br />
+                Группа: {selected.group_name ?? 'публичный'}
+                <br />
+                Обновлена: {fmtDate(selected.updated_at)}
+              </p>
+              <div className="catalog-actions">
+                <button className="primary" onClick={() => openProject(selected.id)}>Открыть</button>
+                <button onClick={() => exportExcel(selected)} title="Таблица протоколов/портов (Excel)">Excel</button>
+              </div>
+            </>
+          )}
+        </main>
+      </div>
     </div>
   );
 }

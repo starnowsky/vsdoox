@@ -723,7 +723,7 @@ export default function App() {
       a.download = (projectName || 'Схема') + ' - связи.xlsx';
       a.click();
       URL.revokeObjectURL(url);
-      setStatus('Таблица связей выгружена в Excel');
+      setStatus('Таблица протоколов/портов выгружена в Excel');
     } catch (e) {
       setStatus((e as Error).message);
     }
@@ -846,13 +846,9 @@ export default function App() {
         <button className="admin-btn" onClick={() => window.open('/catalog', '_blank')} title="Каталог проектов">каталог</button>
         <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
       </div>
-      <div className="banner-fixed"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <aside className="sidebar">
         <div className="sidebar-header">
-          <h1>
-            <img className="logo-mark-img" src="/vibeicon.jpg" alt="VibeDraw" />
-            VibeDraw · сетевые схемы
-          </h1>
+          <img className="sidebar-banner" src="/vibelogo.jpg" alt="VibeDraw" />
         </div>
 
         <div className="tabs">
@@ -876,7 +872,7 @@ export default function App() {
               </button>
             </div>
             <button onClick={handleExport}>Скачать .vsdx</button>
-            <button onClick={() => setShowConnTable(true)}>Таблица связей</button>
+            <button onClick={() => setShowConnTable(true)}>Таблица протоколов/портов</button>
 
             <section>
               <label>Мои проекты</label>
@@ -930,7 +926,7 @@ export default function App() {
         {tab === 'objects' && (
           <>
             <section>
-              <label>Связь между объектами</label>
+              <label>Протокол/порт между объектами</label>
               <select value={cSource} onChange={(e) => setCSource(e.target.value)}>
                 <option value="">— откуда —</option>
                 {nodes.map((n) => (
@@ -970,7 +966,7 @@ export default function App() {
                   />
                 ))}
               </div>
-              <button className="primary" onClick={addConnection}>Добавить связь</button>
+              <button className="primary" onClick={addConnection}>Добавить протокол/порт</button>
             </section>
 
             <section>
@@ -992,9 +988,9 @@ export default function App() {
             </section>
 
             <section>
-              <label>Связи</label>
+              <label>Протокол/порт</label>
               {connections.length === 0 ? (
-                <div className="muted">Связей пока нет</div>
+                <div className="muted">Протоколов/портов пока нет</div>
               ) : (
                 <ul className="connections">
                   {connections.map((c) => (
@@ -1163,9 +1159,9 @@ export default function App() {
       {showConnTable && (
         <div className="modal-backdrop" onClick={() => setShowConnTable(false)}>
           <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
-            <h2>Таблица связей</h2>
+            <h2>Таблица протоколов/портов</h2>
             {connections.length === 0 ? (
-              <div className="muted">Связей пока нет</div>
+              <div className="muted">Протоколов/портов пока нет</div>
             ) : (
               <div className="conn-table-wrap">
                 <table className="conn-table">

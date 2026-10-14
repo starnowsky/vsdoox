@@ -45,6 +45,7 @@ export default function AdminPanel() {
   const [newUser, setNewUser] = useState('');
   const [newPass, setNewPass] = useState('');
   const [newGroupId, setNewGroupId] = useState('');
+  const [tab, setTab] = useState<'integration' | 'access'>('integration');
 
   useEffect(() => {
     adminStatus()
@@ -181,7 +182,8 @@ export default function AdminPanel() {
     return (
       <div className="admin-page">
         <div className="admin-card">
-          <h1>vsdoox · администрирование</h1>
+          <img className="page-banner" src="/vibelogo.jpg" alt="VibeDraw" />
+          <h1>VibeDraw · администрирование</h1>
           {configured === null ? (
             <p className="muted">Загрузка…</p>
           ) : configured === false ? (
@@ -224,9 +226,8 @@ export default function AdminPanel() {
 
   return (
     <div className="admin-page">
-      <div className="banner"><img src="/vibelogo.jpg" alt="VibeDraw" /></div>
       <div className="admin-header">
-        <h1><img className="brand-icon" src="/vibeicon.jpg" alt="" /> VibeDraw · администрирование</h1>
+        <img className="page-banner" src="/vibelogo.jpg" alt="VibeDraw" />
         <div className="admin-header-actions">
           <a href="/" className="link">← к схеме</a>
           <button onClick={handleLogout}>Выйти</button>
@@ -236,6 +237,14 @@ export default function AdminPanel() {
       {error && <div className="error">{error}</div>}
       {status && <div className="success">{status}</div>}
 
+      <div className="admin-tabs">
+        <div className="tabs">
+          <button className={'tab' + (tab === 'integration' ? ' active' : '')} onClick={() => setTab('integration')}>Интеграция</button>
+          <button className={'tab' + (tab === 'access' ? ' active' : '')} onClick={() => setTab('access')}>Настройки доступа</button>
+        </div>
+      </div>
+
+      {tab === 'integration' && (
       <section className="admin-section">
         <h2>Интеграция с Keycloak</h2>
         <label className="checkbox">
@@ -256,7 +265,10 @@ export default function AdminPanel() {
         <input type="password" value={kc.client_secret} onChange={(e) => setKc({ ...kc, client_secret: e.target.value })} />
         <button className="primary" onClick={handleSaveKeycloak}>Сохранить</button>
       </section>
+      )}
 
+      {tab === 'access' && (
+        <>
       <section className="admin-section">
         <h2>Группы доступа</h2>
         <div className="row">
@@ -320,6 +332,8 @@ export default function AdminPanel() {
           ))}
         </ul>
       </section>
+        </>
+      )}
     </div>
   );
 }
