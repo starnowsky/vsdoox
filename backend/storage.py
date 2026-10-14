@@ -7,10 +7,10 @@ import json
 import os
 import uuid
 
-from sqlalchemy import create_engine, delete, select
+from sqlalchemy import create_engine, delete, inspect, select, text
 from sqlalchemy.orm import sessionmaker
 
-from models import Base, Connection, CustomType, Group, Link, LocalUser, Node, Project, User, utcnow
+from models import Base, CatalogFolder, Connection, CustomType, Group, Link, LocalUser, Node, ObjectItem, Project, User, utcnow
 
 NODE_TYPES = {'server', 'firewall', 'network', 'datacenter'}
 
@@ -35,9 +35,30 @@ def init_db():
     _migrate_schema()
 
 
+def _ensure_composite_pk(table_name):
+    """Перестраивает таблицу, если её первичный ключ не составной (id, project_id).
+
+    Идентификаторы связей/линков уникальны только в пределах проекта.
+    """
+    insp = inspect(_engine)
+    if table_name not in insp.get_table_names():
+        return
+    pk_cols = set(insp.get_pk_constraint(table_name).get('constrained_columns') or [])
+    if pk_cols == {'id', 'project_id'}:
+        return
+    table = Base.metadata.tables[table_name]
+    with _engine.begin() as conn:
+        rows = [dict(r) for r in conn.execute(text(f'SELECT * FROM "{table_name}"')).mappings()]
+    table.drop(_engine)
+    table.create(_engine)
+    columns = [c.name for c in table.columns]
+    with _engine.begin() as conn:
+        for r in rows:
+            conn.execute(table.insert().values(**{c: r.get(c) for c in columns}))
+
+
 def _migrate_schema():
     """Лёгкая миграция для существующих dev-БД (до появления Alembic)."""
-    from sqlalchemy import inspect
     insp = inspect(_engine)
     if 'nodes' not in insp.get_table_names():
         return
@@ -51,12 +72,24 @@ def _migrate_schema():
         if 'group_id' not in pcols:
             with _engine.begin() as conn:
                 conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN group_id INTEGER')
+        if 'folder_id' not in pcols:
+            with _engine.begin() as conn:
+                conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN folder_id INTEGER')
+
+    if 'connections' in insp.get_table_names():
+        ccols = {c['name'] for c in insp.get_columns('connections')}
+        if 'description' not in ccols:
+            with _engine.begin() as conn:
+                conn.exec_driver_sql('ALTER TABLE connections ADD COLUMN description TEXT')
 
     if 'admin_sessions' in insp.get_table_names():
         acols = {c['name'] for c in insp.get_columns('admin_sessions')}
         if 'username' not in acols:
             with _engine.begin() as conn:
                 conn.exec_driver_sql('ALTER TABLE admin_sessions ADD COLUMN username TEXT')
+
+    _ensure_composite_pk('connections')
+    _ensure_composite_pk('links')
 
 
 def _ensure_id(value):
@@ -96,7 +129,20 @@ def _link_dict(l):
 
 def _conn_dict(c):
     return {'id': c.id, 'source_id': c.source_id, 'target_id': c.target_id,
-            'protocol': c.protocol, 'port': c.port, 'attributes': c.attributes or {}}
+            'protocol': c.protocol, 'port': c.port, 'description': c.description,
+            'attributes': c.attributes or {}}
+
+
+def _object_dict(o):
+    return {
+        'id': o.id, 'type': o.type, 'name': o.name,
+        'attributes': o.attributes or {},
+        'group_id': o.group_id,
+        'group_name': o.group.name if o.group else None,
+        'owner': o.owner.name if o.owner else None,
+        'created_at': _iso(o.created_at),
+        'updated_at': _iso(o.updated_at),
+    }
 
 
 def get_or_create_user(name):
@@ -131,7 +177,11 @@ def create_project(name, owner_name, group_id=None):
     if group_id is None:
         group_id = get_user_group_id(owner_name)
     with SessionLocal() as session:
-        project = Project(name=name, owner_id=owner_id, group_id=group_id)
+        # У каждой схемы — свой каталог (папка) с её названием.
+        folder = CatalogFolder(name=name)
+        session.add(folder)
+        session.flush()
+        project = Project(name=name, owner_id=owner_id, group_id=group_id, folder_id=folder.id)
         session.add(project)
         session.commit()
         return project.id
@@ -191,6 +241,61 @@ def list_visible_projects(viewer_username, is_admin=False):
         return result
 
 
+def list_catalog(viewer_username, is_admin=False):
+    """Каталог: папки (по одной на схему) с вложенными доступными схемами."""
+    with SessionLocal() as session:
+        group_id = None
+        if not is_admin:
+            group_id = get_user_group_id(viewer_username)
+        projects = session.execute(
+            select(Project).order_by(Project.updated_at.desc())
+        ).scalars().all()
+
+        folders = {}
+        order = []
+        for p in projects:
+            if not is_admin:
+                owner = p.owner.name if p.owner else None
+                if owner != viewer_username and p.group_id is not None and p.group_id != group_id:
+                    continue
+            key = p.folder_id
+            if key not in folders:
+                folders[key] = {
+                    'id': key,
+                    'name': (p.folder.name if p.folder else None) or 'Без каталога',
+                    'projects': [],
+                }
+                order.append(key)
+            folders[key]['projects'].append(_project_summary(p))
+
+        named = sorted(
+            (folders[k] for k in order if k is not None),
+            key=lambda f: f['name'].lower(),
+        )
+        unnamed = [folders[k] for k in order if k is None]
+        return named + unnamed
+
+
+def list_visible_objects(viewer_username, is_admin=False):
+    """Объекты общего каталога, доступные по группе доступа."""
+    with SessionLocal() as session:
+        group_id = None
+        if not is_admin:
+            group_id = get_user_group_id(viewer_username)
+        rows = session.execute(
+            select(ObjectItem).order_by(ObjectItem.name)
+        ).scalars().all()
+        result = []
+        for o in rows:
+            if is_admin:
+                result.append(_object_dict(o))
+                continue
+            owner = o.owner.name if o.owner else None
+            if owner == viewer_username or o.group_id is None or o.group_id == group_id:
+                result.append(_object_dict(o))
+        return result
+
+
 def get_project(project_id):
     with SessionLocal() as session:
         project = session.get(Project, project_id)
@@ -218,13 +323,48 @@ def get_project(project_id):
         }
 
 
+def _upsert_object(session, node_id, ntype, name, attrs, group_id, owner_id):
+    """Сохраняет объект схемы в общий каталог объектов (ключ — node_id)."""
+    obj = session.execute(
+        select(ObjectItem).where(ObjectItem.node_id == node_id)
+    ).scalar_one_or_none()
+    if obj:
+        obj.type = ntype
+        obj.name = name
+        obj.attributes = attrs
+        obj.group_id = group_id
+        obj.owner_id = owner_id
+        obj.updated_at = utcnow()
+    else:
+        session.add(ObjectItem(
+            node_id=node_id, type=ntype, name=name, attributes=attrs,
+            group_id=group_id, owner_id=owner_id,
+        ))
+
+
 def save_project(project_id, name, nodes, links, connections):
     with SessionLocal() as session:
         project = session.get(Project, project_id)
         if not project:
             return False
-        project.name = (name or '').strip() or 'Без названия'
+        name = (name or '').strip() or 'Без названия'
+        project.name = name
         project.updated_at = utcnow()
+
+        # Каталог: у каждой схемы — папка с её названием (создаём/переименовываем).
+        if project.folder_id is None:
+            folder = CatalogFolder(name=name)
+            session.add(folder)
+            session.flush()
+            project.folder_id = folder.id
+        elif project.folder is not None:
+            others = session.execute(
+                select(Project).where(
+                    Project.folder_id == project.folder_id, Project.id != project_id
+                )
+            ).scalars().all()
+            if not others:
+                project.folder.name = name
 
         session.execute(delete(Connection).where(Connection.project_id == project_id))
         session.execute(delete(Link).where(Link.project_id == project_id))
@@ -232,13 +372,18 @@ def save_project(project_id, name, nodes, links, connections):
 
         for n in nodes or []:
             ntype = str(n.get('type') or 'server').strip() or 'server'
+            node_id = _ensure_id(n.get('id'))
+            node_name = (n.get('name') or '').strip() or 'Узел'
+            attrs = _norm_attributes(n.get('attributes'))
             session.add(Node(
-                id=_ensure_id(n.get('id')), project_id=project_id, type=ntype,
-                name=(n.get('name') or '').strip() or 'Узел',
+                id=node_id, project_id=project_id, type=ntype,
+                name=node_name,
                 parent_id=n.get('parent_id') or None,
                 x=float(n.get('x', 0) or 0), y=float(n.get('y', 0) or 0),
-                attributes=_norm_attributes(n.get('attributes')),
+                attributes=attrs,
             ))
+            _upsert_object(session, node_id, ntype, node_name, attrs,
+                           project.group_id, project.owner_id)
         for l in links or []:
             session.add(Link(
                 id=_ensure_id(l.get('id')), project_id=project_id,
@@ -250,6 +395,7 @@ def save_project(project_id, name, nodes, links, connections):
                 id=_ensure_id(c.get('id')), project_id=project_id,
                 source_id=str(c.get('source_id', '')), target_id=str(c.get('target_id', '')),
                 protocol=c.get('protocol'), port=c.get('port'),
+                description=c.get('description'),
                 attributes=_norm_attributes(c.get('attributes')),
             ))
         session.commit()
@@ -258,10 +404,18 @@ def save_project(project_id, name, nodes, links, connections):
 
 def delete_project(project_id):
     with SessionLocal() as session:
+        project = session.get(Project, project_id)
+        folder_id = project.folder_id if project else None
         session.execute(delete(Connection).where(Connection.project_id == project_id))
         session.execute(delete(Link).where(Link.project_id == project_id))
         session.execute(delete(Node).where(Node.project_id == project_id))
         session.execute(delete(Project).where(Project.id == project_id))
+        if folder_id is not None:
+            remaining = session.execute(
+                select(Project).where(Project.folder_id == folder_id)
+            ).scalars().all()
+            if not remaining:
+                session.execute(delete(CatalogFolder).where(CatalogFolder.id == folder_id))
         session.commit()
 
 

@@ -8,6 +8,7 @@ from generator import VisioGenerator, compute_layout
 import storage
 import admin
 import keycloak
+import excel
 from topology import analyze_interaction
 
 app = Flask(__name__, static_folder='../frontend/dist', static_url_path='')
@@ -171,14 +172,31 @@ def _can_view(project, username, is_admin):
     return storage.get_user_group_id(username) == project.get('group_id')
 
 
+def _connections_rows(nodes, connections):
+    """Строки таблицы связей: [источник, назначение, протокол/порт, описание]."""
+    name_by_id = {str(n.get('id')): (n.get('name') or str(n.get('id'))) for n in nodes or []}
+    rows = []
+    for c in connections or []:
+        proto = (c.get('protocol') or '')
+        port = c.get('port')
+        proto_port = proto + (':' + str(port) if port else '')
+        rows.append([
+            name_by_id.get(str(c.get('source_id')), str(c.get('source_id'))),
+            name_by_id.get(str(c.get('target_id')), str(c.get('target_id'))),
+            proto_port,
+            c.get('description') or '',
+        ])
+    return rows
+
+
 @app.route('/api/catalog', methods=['GET'])
 def catalog_list():
     ident = _current_identity()
     if not ident:
         return jsonify({'error': 'Требуется авторизация'}), 401
     username, is_admin = ident
-    projects = storage.list_visible_projects(username, is_admin)
-    return jsonify({'projects': projects, 'viewer': username, 'is_admin': is_admin})
+    folders = storage.list_catalog(username, is_admin)
+    return jsonify({'folders': folders, 'viewer': username, 'is_admin': is_admin})
 
 
 @app.route('/api/catalog/<int:project_id>', methods=['GET'])
@@ -193,6 +211,37 @@ def catalog_get(project_id):
     if not _can_view(project, username, is_admin):
         return jsonify({'error': 'Нет доступа к проекту'}), 403
     return jsonify(project)
+
+
+@app.route('/api/objects', methods=['GET'])
+def objects_list():
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, is_admin = ident
+    return jsonify({'objects': storage.list_visible_objects(username, is_admin),
+                    'viewer': username, 'is_admin': is_admin})
+
+
+@app.route('/api/projects/<int:project_id>/connections.xlsx', methods=['GET'])
+def project_connections_xlsx(project_id):
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, is_admin = ident
+    project = storage.get_project(project_id)
+    if project is None:
+        return jsonify({'error': 'Проект не найден'}), 404
+    if not _can_view(project, username, is_admin):
+        return jsonify({'error': 'Нет доступа к проекту'}), 403
+    rows = _connections_rows(project['nodes'], project['connections'])
+    output = excel.build_connections_xlsx(rows)
+    return send_file(
+        io.BytesIO(output),
+        mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+        as_attachment=True,
+        download_name=f"{_clean_title(project['name'])} - связи.xlsx",
+    )
 
 
 @app.route('/api/admin/projects', methods=['GET'])
@@ -257,6 +306,30 @@ def export():
             mimetype='application/vnd.ms-visio.drawing',
             as_attachment=True,
             download_name=f'{title}.vsdx'
+        )
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        return jsonify({'error': str(e)}), 500
+
+
+@app.route('/api/export/connections.xlsx', methods=['POST'])
+def export_connections_xlsx():
+    """Экспорт таблицы связей (источник, назначение, протокол/порт, описание) в Excel."""
+    try:
+        data = request.get_json(silent=True) or {}
+        title = _clean_title(data.get('title') or 'Схема')
+        nodes = data.get('nodes', [])
+        connections = data.get('connections', [])
+        if not isinstance(nodes, list) or not isinstance(connections, list):
+            return jsonify({'error': 'nodes и connections должны быть списками'}), 400
+        rows = _connections_rows(nodes, connections)
+        output = excel.build_connections_xlsx(rows)
+        return send_file(
+            io.BytesIO(output),
+            mimetype='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+            as_attachment=True,
+            download_name=f'{title} - связи.xlsx',
         )
     except Exception as e:
         import traceback

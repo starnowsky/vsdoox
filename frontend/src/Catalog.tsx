@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
-import { catalogProjects } from './api';
-import type { CatalogProject } from './api';
+import { catalogProjects, downloadConnectionsXlsx } from './api';
+import type { CatalogFolder } from './api';
 
 function fmtDate(iso?: string): string {
   if (!iso) return '';
@@ -9,8 +9,17 @@ function fmtDate(iso?: string): string {
   return d.toLocaleString('ru-RU');
 }
 
+function downloadBlob(blob: Blob, name: string) {
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = name;
+  a.click();
+  URL.revokeObjectURL(url);
+}
+
 export default function Catalog() {
-  const [projects, setProjects] = useState<CatalogProject[]>([]);
+  const [folders, setFolders] = useState<CatalogFolder[]>([]);
   const [viewer, setViewer] = useState('');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -20,7 +29,7 @@ export default function Catalog() {
     setError('');
     try {
       const res = await catalogProjects();
-      setProjects(res.projects);
+      setFolders(res.folders);
       setViewer(res.viewer);
     } catch (e) {
       setError((e as Error).message);
@@ -37,6 +46,17 @@ export default function Catalog() {
     window.location.href = '/?project=' + id;
   };
 
+  const exportExcel = async (id: number, name: string) => {
+    try {
+      const blob = await downloadConnectionsXlsx(id);
+      downloadBlob(blob, name + ' - связи.xlsx');
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const total = folders.reduce((acc, f) => acc + f.projects.length, 0);
+
   return (
     <div className="admin-page">
       <div className="admin-header">
@@ -48,24 +68,35 @@ export default function Catalog() {
       </div>
 
       {error && <div className="error">{error}</div>}
-      {!error && !loading && projects.length === 0 && (
+      {!error && !loading && total === 0 && (
         <div className="muted">Нет доступных проектов</div>
       )}
 
-      <ul className="admin-list">
-        {projects.map((p) => (
-          <li key={p.id}>
-            <div className="catalog-item">
-              <span className="catalog-name">{p.name}</span>
-              <span className="catalog-meta">
-                {p.owner ?? '—'} · {p.group_name ?? 'публичный'}
-              </span>
-              <span className="catalog-meta muted">{fmtDate(p.updated_at)}</span>
-            </div>
-            <button className="primary" onClick={() => openProject(p.id)}>Открыть</button>
-          </li>
-        ))}
-      </ul>
+      {folders.map((f) => (
+        <div className="folder" key={f.id ?? 'none'}>
+          <div className="folder-header">
+            <span>📁 {f.name}</span>
+            <span className="catalog-meta muted">{f.projects.length}</span>
+          </div>
+          <ul className="admin-list">
+            {f.projects.map((p) => (
+              <li key={p.id}>
+                <div className="catalog-item">
+                  <span className="catalog-name">{p.name}</span>
+                  <span className="catalog-meta">
+                    {p.owner ?? '—'} · {p.group_name ?? 'публичный'}
+                  </span>
+                  <span className="catalog-meta muted">{fmtDate(p.updated_at)}</span>
+                </div>
+                <div className="catalog-actions">
+                  <button className="primary" onClick={() => openProject(p.id)}>Открыть</button>
+                  <button onClick={() => exportExcel(p.id, p.name)} title="Таблица связей (Excel)">Excel</button>
+                </div>
+              </li>
+            ))}
+          </ul>
+        </div>
+      ))}
     </div>
   );
 }

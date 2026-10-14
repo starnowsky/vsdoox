@@ -750,3 +750,61 @@ button.del:hover { background: var(--surface-2); }
   color: var(--text);
 }
 .catalog-meta.muted { color: var(--text-muted); }
+
+/* каталог: папки (каталоги схем) */
+.folder {
+  max-width: 640px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 14px 16px;
+  margin-bottom: 14px;
+}
+.folder-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  font-weight: 700;
+  font-size: 15px;
+  margin-bottom: 6px;
+}
+.folder-header .catalog-meta { font-weight: 500; }
+
+.catalog-actions {
+  display: flex;
+  gap: 8px;
+  flex-shrink: 0;
+  margin-left: 10px;
+}
+.catalog-actions button { margin-top: 0; white-space: nowrap; }
+
+/* таблица связей */
+.conn-table-wrap {
+  max-height: 60vh;
+  overflow: auto;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+}
+.conn-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+.conn-table th,
+.conn-table td {
+  text-align: left;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+.conn-table thead th {
+  background: var(--surface-2);
+  font-weight: 600;
+  position: sticky;
+  top: 0;
+}
+.conn-table tbody tr:last-child td { border-bottom: none; }
+
+.modal-wide {
+  width: min(720px, 92vw);
+}

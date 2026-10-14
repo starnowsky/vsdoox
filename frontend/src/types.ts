@@ -24,6 +24,7 @@ export interface Connection {
   target_id: string;
   protocol?: string | null;
   port?: string | null;
+  description?: string | null;
   attributes: Record<string, unknown>;
 }
 

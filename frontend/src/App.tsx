@@ -11,16 +11,18 @@ import {
   createProject,
   deleteCustomType,
   deleteProject,
+  exportConnectionsXlsx,
   exportVSDX,
   getCatalogProject,
   getProject,
   keycloakConfig,
   keycloakLoginUrl,
   listCustomTypes,
+  listObjects,
   listProjects,
   saveProject,
 } from './api';
-import type { CustomType, ProjectSummary } from './api';
+import type { CustomType, ObjectItem, ProjectSummary } from './api';
 import type { Connection as Interaction, GraphLink, GraphNode, NodeType } from './types';
 
 const BUILTIN_NODE_TYPES: NodeTypes = {
@@ -200,6 +202,7 @@ function toGraph(
       target_id: c.target_id,
       protocol: c.protocol ?? null,
       port: c.port ?? null,
+      description: c.description ?? null,
       attributes: c.attributes ?? {},
     })),
   };
@@ -302,7 +305,7 @@ function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   });
 }
 
-type Tab = 'manage' | 'objects' | 'settings';
+type Tab = 'manage' | 'objects' | 'library' | 'settings';
 
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DeviceData>>([]);
@@ -340,6 +343,13 @@ export default function App() {
       .then((r) => setCustomTypes(r.types))
       .catch(() => {});
   }, []);
+
+  useEffect(() => {
+    if (!userToken) return;
+    listObjects()
+      .then((r) => setLibrary(r.objects))
+      .catch(() => {});
+  }, [userToken]);
 
   // Keycloak-callback (?kc_token=...&kc_user=...) и открытие проекта из каталога (?project=...).
   useEffect(() => {
@@ -385,6 +395,7 @@ export default function App() {
   const [cTarget, setCTarget] = useState('');
   const [cProtocol, setCProtocol] = useState('tcp');
   const [cPort, setCPort] = useState('');
+  const [cDescription, setCDescription] = useState('');
   const [cColor, setCColor] = useState(DEFAULT_CONN_COLOR);
   const [cParent, setCParent] = useState('');
 
@@ -394,6 +405,8 @@ export default function App() {
   const [editAttrs, setEditAttrs] = useState<Record<string, string>>({});
 
   const [pathResult, setPathResult] = useState<{ found: boolean; path: string[]; firewalls: string[] } | null>(null);
+  const [showConnTable, setShowConnTable] = useState(false);
+  const [library, setLibrary] = useState<ObjectItem[]>([]);
 
   const displayNodes = useMemo(() => applySizes(nodes), [nodes]);
 
@@ -546,6 +559,20 @@ export default function App() {
     [setNodes],
   );
 
+  const addLibraryObject = useCallback(
+    (obj: ObjectItem) => {
+      const node: Node<DeviceData> = {
+        id: genId(),
+        type: obj.type,
+        position: { x: 0, y: 0 },
+        data: { name: obj.name, attributes: obj.attributes ?? {} },
+      };
+      setNodes((nds) => autoLayout(nds.concat(node)));
+      setStatus('Добавлен объект из библиотеки: ' + obj.name);
+    },
+    [setNodes],
+  );
+
   const addConnection = useCallback(() => {
     if (!cSource || !cTarget) {
       setStatus('Выберите два объекта');
@@ -561,12 +588,14 @@ export default function App() {
       target_id: cTarget,
       protocol: cProtocol || undefined,
       port: cPort || undefined,
+      description: cDescription.trim() || undefined,
       attributes: { color: cColor, parent_id: cParent || undefined },
     };
     setConnections((cs) => cs.concat(conn));
     setCPort('');
+    setCDescription('');
     setCParent('');
-  }, [cSource, cTarget, cProtocol, cPort, cColor, cParent]);
+  }, [cSource, cTarget, cProtocol, cPort, cDescription, cColor, cParent]);
 
   const deleteConnection = useCallback((id: string) => {
     setConnections((cs) => cs.filter((c) => c.id !== id));
@@ -670,6 +699,31 @@ export default function App() {
       a.click();
       URL.revokeObjectURL(url);
       setStatus('Файл .vsdx скачан');
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }, [nodes, connections, projectName]);
+
+  const handleExportConnXlsx = useCallback(async () => {
+    try {
+      const blob = await exportConnectionsXlsx({
+        title: projectName,
+        nodes: nodes.map((n) => ({ id: n.id, name: n.data.name })),
+        connections: connections.map((c) => ({
+          source_id: c.source_id,
+          target_id: c.target_id,
+          protocol: c.protocol,
+          port: c.port,
+          description: c.description,
+        })),
+      });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (projectName || 'Схема') + ' - связи.xlsx';
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus('Таблица связей выгружена в Excel');
     } catch (e) {
       setStatus((e as Error).message);
     }
@@ -802,6 +856,7 @@ export default function App() {
         <div className="tabs">
           <button className={'tab' + (tab === 'manage' ? ' active' : '')} onClick={() => setTab('manage')}>Управление</button>
           <button className={'tab' + (tab === 'objects' ? ' active' : '')} onClick={() => setTab('objects')}>Объекты</button>
+          <button className={'tab' + (tab === 'library' ? ' active' : '')} onClick={() => setTab('library')}>Библиотека</button>
           <button className={'tab' + (tab === 'settings' ? ' active' : '')} onClick={() => setTab('settings')}>Настройки</button>
         </div>
 
@@ -819,6 +874,7 @@ export default function App() {
               </button>
             </div>
             <button onClick={handleExport}>Скачать .vsdx</button>
+            <button onClick={() => setShowConnTable(true)}>Таблица связей</button>
 
             <section>
               <label>Мои проекты</label>
@@ -900,6 +956,7 @@ export default function App() {
                 </select>
                 <input value={cPort} onChange={(e) => setCPort(e.target.value)} placeholder="Порт" />
               </div>
+              <input value={cDescription} onChange={(e) => setCDescription(e.target.value)} placeholder="Описание" />
               <div className="swatches">
                 {CONN_COLORS.map((col) => (
                   <button
@@ -948,9 +1005,43 @@ export default function App() {
                       />
                       <button className="link" onClick={() => showConnection(c)}>
                         {nodeName(c.source_id)} → {nodeName(c.target_id)}
-                        <span className="conn-meta">{c.protocol ?? 'any'}{c.port ? ':' + c.port : ''}</span>
+                        <span className="conn-meta">
+                          {c.protocol ?? 'any'}{c.port ? ':' + c.port : ''}
+                          {c.description ? ' · ' + c.description : ''}
+                        </span>
                       </button>
                       <button className="del" onClick={() => deleteConnection(c.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
+            </section>
+          </>
+        )}
+
+        {tab === 'library' && (
+          <>
+            <section>
+              <label>Библиотека объектов</label>
+              <button
+                onClick={() => {
+                  listObjects()
+                    .then((r) => setLibrary(r.objects))
+                    .catch((e) => setStatus((e as Error).message));
+                }}
+              >
+                Обновить
+              </button>
+              {library.length === 0 ? (
+                <div className="muted">Объектов пока нет — сохраните схему, и её объекты появятся здесь</div>
+              ) : (
+                <ul className="projects">
+                  {library.map((o) => (
+                    <li key={o.id}>
+                      <button className="link" onClick={() => addLibraryObject(o)} title="Добавить на схему">
+                        {o.name} <span className="conn-meta">{typeName(o.type)}</span>
+                      </button>
+                      <span className="catalog-meta muted">{o.group_name ?? 'публичный'}</span>
                     </li>
                   ))}
                 </ul>
@@ -1062,6 +1153,46 @@ export default function App() {
             <div className="row">
               <button onClick={handleEditCancel}>Отмена</button>
               <button className="primary" onClick={handleEditSave}>Сохранить</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {showConnTable && (
+        <div className="modal-backdrop" onClick={() => setShowConnTable(false)}>
+          <div className="modal modal-wide" onClick={(e) => e.stopPropagation()}>
+            <h2>Таблица связей</h2>
+            {connections.length === 0 ? (
+              <div className="muted">Связей пока нет</div>
+            ) : (
+              <div className="conn-table-wrap">
+                <table className="conn-table">
+                  <thead>
+                    <tr>
+                      <th>Источник</th>
+                      <th>Назначение</th>
+                      <th>Протокол/порт</th>
+                      <th>Описание</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {connections.map((c) => (
+                      <tr key={c.id}>
+                        <td>{nodeName(c.source_id)}</td>
+                        <td>{nodeName(c.target_id)}</td>
+                        <td>{(c.protocol ?? 'any') + (c.port ? ':' + c.port : '')}</td>
+                        <td>{c.description ?? ''}</td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
+            )}
+            <div className="row">
+              <button onClick={() => setShowConnTable(false)}>Закрыть</button>
+              <button className="primary" onClick={handleExportConnXlsx} disabled={connections.length === 0}>
+                Выгрузить в Excel
+              </button>
             </div>
           </div>
         </div>

@@ -206,6 +206,14 @@ class CatalogAccessTest(unittest.TestCase):
             '/api/auth/login', json={'username': username, 'password': 'p'}
         ).get_json()['token']
 
+    def _catalog_ids(self, headers):
+        data = self.client.get('/api/catalog', headers=headers).get_json()
+        ids = set()
+        for f in data['folders']:
+            for p in f['projects']:
+                ids.add(p['id'])
+        return ids
+
     def test_group_based_visibility(self):
         admin_tok = self._admin_token()
         g1 = self.client.post('/api/admin/groups', json={'name': 'team-a'},
@@ -232,9 +240,9 @@ class CatalogAccessTest(unittest.TestCase):
         self.assertEqual(pa['group_id'], g1)
 
         # члены одной группы видят проект, чужая группа — нет
-        alice_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': alice_tok}).get_json()['projects']}
-        bob_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': bob_tok}).get_json()['projects']}
-        carol_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': carol_tok}).get_json()['projects']}
+        alice_ids = self._catalog_ids({'X-User-Token': alice_tok})
+        bob_ids = self._catalog_ids({'X-User-Token': bob_tok})
+        carol_ids = self._catalog_ids({'X-User-Token': carol_tok})
         self.assertIn(pid_alice, alice_ids)
         self.assertIn(pid_alice, bob_ids)
         self.assertNotIn(pid_alice, carol_ids)
@@ -242,7 +250,7 @@ class CatalogAccessTest(unittest.TestCase):
         self.assertNotIn(pid_carol, alice_ids)
 
         # админ видит всё
-        admin_ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-Admin-Token': admin_tok}).get_json()['projects']}
+        admin_ids = self._catalog_ids({'X-Admin-Token': admin_tok})
         self.assertTrue({pid_alice, pid_carol}.issubset(admin_ids))
 
     def test_public_project_visible_to_all(self):
@@ -251,7 +259,7 @@ class CatalogAccessTest(unittest.TestCase):
         self.client.post('/api/admin/users', json={'username': 'u_viewer', 'password': 'p', 'group_id': None},
                          headers={'X-Admin-Token': admin_tok})
         viewer_tok = self._login('u_viewer')
-        ids = {p['id'] for p in self.client.get('/api/catalog', headers={'X-User-Token': viewer_tok}).get_json()['projects']}
+        ids = self._catalog_ids({'X-User-Token': viewer_tok})
         self.assertIn(pid, ids)
 
     def test_reassign_project_group(self):
@@ -266,6 +274,136 @@ class CatalogAccessTest(unittest.TestCase):
         self.assertEqual(r.status_code, 200)
         proj = self.client.get(f'/api/projects/{pid}').get_json()
         self.assertEqual(proj['group_id'], g1)
+
+
+class CatalogFoldersObjectsTest(unittest.TestCase):
+    """Каталоги (папки), таблица связей (Excel) и общий каталог объектов."""
+
+    def setUp(self):
+        self.client = appmod.app.test_client()
+
+    def _admin_token(self):
+        r = self.client.post('/api/admin/setup', json={'key': 'secret-key'})
+        if r.status_code == 201:
+            return r.get_json()['token']
+        r = self.client.post('/api/admin/login', json={'key': 'secret-key'})
+        return r.get_json()['token']
+
+    def _login(self, username):
+        return self.client.post(
+            '/api/auth/login', json={'username': username, 'password': 'p'}
+        ).get_json()['token']
+
+    def test_catalog_returns_folders_named_after_schema(self):
+        admin_tok = self._admin_token()
+        p1 = self.client.post('/api/projects', json={'name': 'Схема A', 'owner': 'u_alice'}).get_json()['id']
+        p2 = self.client.post('/api/projects', json={'name': 'Схема B', 'owner': 'u_alice'}).get_json()['id']
+
+        data = self.client.get('/api/catalog', headers={'X-Admin-Token': admin_tok}).get_json()
+        folders = {f['name']: [p['id'] for p in f['projects']] for f in data['folders']}
+        self.assertEqual(folders.get('Схема A'), [p1])
+        self.assertEqual(folders.get('Схема B'), [p2])
+
+    def test_folder_renamed_on_save(self):
+        admin_tok = self._admin_token()
+        pid = self.client.post('/api/projects', json={'name': 'Старое имя', 'owner': 'u_alice'}).get_json()['id']
+        self.client.put(f'/api/projects/{pid}', json={
+            'name': 'Новое имя', 'nodes': [], 'links': [], 'connections': [],
+        })
+        data = self.client.get('/api/catalog', headers={'X-Admin-Token': admin_tok}).get_json()
+        names = [f['name'] for f in data['folders']]
+        self.assertIn('Новое имя', names)
+        self.assertNotIn('Старое имя', names)
+
+    def test_save_creates_library_objects(self):
+        admin_tok = self._admin_token()
+        self.client.post('/api/admin/users', json={'username': 'u_lib', 'password': 'p', 'group_id': None},
+                         headers={'X-Admin-Token': admin_tok})
+        tok = self._login('u_lib')
+        pid = self.client.post('/api/projects', json={'name': 'PLib', 'owner': 'u_lib'}).get_json()['id']
+        self.client.put(f'/api/projects/{pid}', json={
+            'name': 'PLib',
+            'nodes': [
+                {'id': 'srv1', 'type': 'server', 'name': 'Web', 'attributes': {'ip': '10.0.0.1'}},
+                {'id': 'fw1', 'type': 'firewall', 'name': 'МЭ', 'attributes': {}},
+            ],
+            'links': [], 'connections': [],
+        })
+        objs = self.client.get('/api/objects', headers={'X-User-Token': tok}).get_json()['objects']
+        by_name = {o['name']: o for o in objs}
+        self.assertIn('Web', by_name)
+        self.assertEqual(by_name['Web']['type'], 'server')
+        self.assertEqual(by_name['Web']['attributes']['ip'], '10.0.0.1')
+        self.assertIn('МЭ', by_name)
+
+    def test_object_visibility_by_group(self):
+        admin_tok = self._admin_token()
+        g = self.client.post('/api/admin/groups', json={'name': 'lib-team'},
+                             headers={'X-Admin-Token': admin_tok}).get_json()['id']
+        for u in ['u_lib_a', 'u_lib_b']:
+            self.client.post('/api/admin/users', json={'username': u, 'password': 'p', 'group_id': g},
+                             headers={'X-Admin-Token': admin_tok})
+        self.client.post('/api/admin/users', json={'username': 'u_lib_c', 'password': 'p', 'group_id': None},
+                         headers={'X-Admin-Token': admin_tok})
+        a_tok = self._login('u_lib_a')
+        b_tok = self._login('u_lib_b')
+        c_tok = self._login('u_lib_c')
+
+        pid = self.client.post('/api/projects', json={'name': 'PLibG', 'owner': 'u_lib_a'}).get_json()['id']
+        self.client.put(f'/api/projects/{pid}', json={
+            'name': 'PLibG',
+            'nodes': [{'id': 'n1', 'type': 'server', 'name': 'SharedObj', 'attributes': {}}],
+            'links': [], 'connections': [],
+        })
+
+        names_a = {o['name'] for o in self.client.get('/api/objects', headers={'X-User-Token': a_tok}).get_json()['objects']}
+        names_b = {o['name'] for o in self.client.get('/api/objects', headers={'X-User-Token': b_tok}).get_json()['objects']}
+        names_c = {o['name'] for o in self.client.get('/api/objects', headers={'X-User-Token': c_tok}).get_json()['objects']}
+        self.assertIn('SharedObj', names_a)
+        self.assertIn('SharedObj', names_b)
+        self.assertNotIn('SharedObj', names_c)
+
+    def test_connections_xlsx_post(self):
+        r = self.client.post('/api/export/connections.xlsx', json={
+            'title': 'Схема',
+            'nodes': [{'id': 'a', 'name': 'Сервер A'}, {'id': 'b', 'name': 'Сервер B'}],
+            'connections': [{'source_id': 'a', 'target_id': 'b', 'protocol': 'tcp',
+                             'port': '443', 'description': 'HTTPS'}],
+        })
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data[:4], b'PK\x03\x04')
+        self.assertIn('spreadsheetml', r.headers.get('Content-Type', ''))
+
+    def test_project_connections_xlsx_get(self):
+        admin_tok = self._admin_token()
+        self.client.post('/api/admin/users', json={'username': 'u_xlsx', 'password': 'p', 'group_id': None},
+                         headers={'X-Admin-Token': admin_tok})
+        tok = self._login('u_xlsx')
+        pid = self.client.post('/api/projects', json={'name': 'PXlsx', 'owner': 'u_xlsx'}).get_json()['id']
+        self.client.put(f'/api/projects/{pid}', json={
+            'name': 'PXlsx',
+            'nodes': [{'id': 'a', 'type': 'server', 'name': 'A', 'attributes': {}},
+                      {'id': 'b', 'type': 'server', 'name': 'B', 'attributes': {}}],
+            'links': [],
+            'connections': [{'id': 'c1', 'source_id': 'a', 'target_id': 'b',
+                             'protocol': 'udp', 'port': '53', 'description': 'DNS'}],
+        })
+        r = self.client.get(f'/api/projects/{pid}/connections.xlsx', headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.data[:4], b'PK\x03\x04')
+
+    def test_description_roundtrip(self):
+        pid = self.client.post('/api/projects', json={'name': 'PDesc', 'owner': 'alice'}).get_json()['id']
+        self.client.put(f'/api/projects/{pid}', json={
+            'name': 'PDesc',
+            'nodes': [{'id': 'a', 'type': 'server', 'name': 'A', 'attributes': {}},
+                      {'id': 'b', 'type': 'server', 'name': 'B', 'attributes': {}}],
+            'links': [],
+            'connections': [{'id': 'c1', 'source_id': 'a', 'target_id': 'b',
+                             'protocol': 'tcp', 'port': '22', 'description': 'SSH доступ'}],
+        })
+        proj = self.client.get(f'/api/projects/{pid}').get_json()
+        self.assertEqual(proj['connections'][0]['description'], 'SSH доступ')
 
 
 if __name__ == '__main__':

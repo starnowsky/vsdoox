@@ -72,8 +72,30 @@ export interface CatalogProject {
   updated_at?: string;
 }
 
-export function catalogProjects(): Promise<{ projects: CatalogProject[]; viewer: string; is_admin: boolean }> {
+export interface CatalogFolder {
+  id: number | null;
+  name: string;
+  projects: CatalogProject[];
+}
+
+export function catalogProjects(): Promise<{ folders: CatalogFolder[]; viewer: string; is_admin: boolean }> {
   return request('/api/catalog');
+}
+
+export interface ObjectItem {
+  id: number;
+  type: string;
+  name: string;
+  attributes: Record<string, unknown>;
+  group_id: number | null;
+  group_name: string | null;
+  owner: string | null;
+  created_at?: string;
+  updated_at?: string;
+}
+
+export function listObjects(): Promise<{ objects: ObjectItem[]; viewer: string; is_admin: boolean }> {
+  return request('/api/objects');
 }
 
 export function getCatalogProject(id: number): Promise<Project> {
@@ -109,6 +131,47 @@ export async function exportVSDX(payload: {
       if (body && typeof body.error === 'string') message = body.error;
     } catch {
       // тело не JSON — оставляем дефолтное сообщение
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
+export async function downloadConnectionsXlsx(id: number): Promise<Blob> {
+  const headers: Record<string, string> = {};
+  const token = localStorage.getItem('vsdoox.user.token');
+  if (token) headers['X-User-Token'] = token;
+  const res = await fetch('/api/projects/' + id + '/connections.xlsx', { headers });
+  if (!res.ok) {
+    let message = 'Ошибка экспорта';
+    try {
+      const body = await res.json();
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch {
+      // не JSON
+    }
+    throw new Error(message);
+  }
+  return res.blob();
+}
+
+export async function exportConnectionsXlsx(payload: {
+  title: string;
+  nodes: { id: string; name: string }[];
+  connections: unknown[];
+}): Promise<Blob> {
+  const res = await fetch('/api/export/connections.xlsx', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    let message = 'Ошибка экспорта';
+    try {
+      const body = await res.json();
+      if (body && typeof body.error === 'string') message = body.error;
+    } catch {
+      // не JSON
     }
     throw new Error(message);
   }
