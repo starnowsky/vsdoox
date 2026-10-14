@@ -28,8 +28,8 @@ export function OrthoEdge(props: EdgeProps) {
   } = props;
 
   const d = (data?.d as string) ?? '';
-  const midX = (sourceX + targetX) / 2;
-  const midY = (sourceY + targetY) / 2;
+  const midX = typeof data?.labelX === 'number' ? (data.labelX as number) : (sourceX + targetX) / 2;
+  const midY = typeof data?.labelY === 'number' ? (data.labelY as number) : (sourceY + targetY) / 2;
 
   const ls = labelStyle as LabelStyle | undefined;
   const bg = labelBgStyle as LabelBgStyle | undefined;

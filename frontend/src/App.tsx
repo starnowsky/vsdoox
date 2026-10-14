@@ -89,7 +89,11 @@ function typeName(type: string): string {
   return DEFAULT_NAMES[type] ?? type;
 }
 
-const CONN_COLORS = ['#4a6b8a', '#a86a6a', '#6a8a6a', '#a88a5a', '#7a6a9a', '#7a7f86'];
+const CONN_COLORS = [
+  '#4a6b8a', '#a86a6a', '#6a8a6a', '#a88a5a', '#7a6a9a', '#7a7f86',
+  '#3b82f6', '#ef4444', '#22c55e', '#eab308', '#8b5cf6', '#ec4899',
+  '#f97316', '#06b6d4', '#84cc16',
+];
 const DEFAULT_CONN_COLOR = CONN_COLORS[0];
 
 const DC_W = 340;
@@ -479,7 +483,7 @@ export default function App() {
     });
 
     const routed = routeConnections(routeItems);
-    const dById = new Map(routed.map((r) => [r.id, r.d]));
+    const routedById = new Map(routed.map((r) => [r.id, r]));
 
     return connections.map((c, idx) => {
       const item = routeItems[idx];
@@ -494,7 +498,11 @@ export default function App() {
         targetHandle: 't-' + item.targetSide,
         type: 'ortho',
         label,
-        data: { d: dById.get(c.id) ?? '' },
+        data: {
+          d: routedById.get(c.id)?.d ?? '',
+          labelX: routedById.get(c.id)?.labelPos.x ?? 0,
+          labelY: routedById.get(c.id)?.labelPos.y ?? 0,
+        },
         style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
@@ -994,6 +1002,9 @@ export default function App() {
                     title={col}
                   />
                 ))}
+                <label className="swatch-pipette" title="Пипетка — выбрать свой цвет">
+                  <input type="color" value={cColor} onChange={(e) => setCColor(e.target.value)} />
+                </label>
               </div>
               <button className="primary" onClick={addConnection}>Добавить протокол/порт</button>
             </section>

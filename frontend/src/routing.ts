@@ -113,7 +113,30 @@ function buildPath(path: Pt[], bridges: Bridge[]): string {
   return d;
 }
 
-export function routeConnections(items: RouteItem[]): Array<{ id: string; d: string }> {
+function midpointAlongPath(path: Pt[]): Pt {
+  let total = 0;
+  const lens: number[] = [];
+  for (let i = 0; i < path.length - 1; i++) {
+    const l = Math.hypot(path[i + 1].x - path[i].x, path[i + 1].y - path[i].y);
+    lens.push(l);
+    total += l;
+  }
+  const half = total / 2;
+  let acc = 0;
+  for (let i = 0; i < path.length - 1; i++) {
+    if (acc + lens[i] >= half) {
+      const t = lens[i] === 0 ? 0 : (half - acc) / lens[i];
+      return {
+        x: path[i].x + (path[i + 1].x - path[i].x) * t,
+        y: path[i].y + (path[i + 1].y - path[i].y) * t,
+      };
+    }
+    acc += lens[i];
+  }
+  return path[path.length - 1];
+}
+
+export function routeConnections(items: RouteItem[]): Array<{ id: string; d: string; labelPos: Pt }> {
   const paths = items.map((it) => orthoPath(it.source, it.waypoints, it.target));
 
   // Группировка по совпадающему маршруту и смещение параллельных линий.
@@ -155,5 +178,9 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
     }
   }
 
-  return shifted.map((path, i) => ({ id: items[i].id, d: buildPath(path, bridges[i]) }));
+  return shifted.map((path, i) => ({
+    id: items[i].id,
+    d: buildPath(path, bridges[i]),
+    labelPos: midpointAlongPath(path),
+  }));
 }
