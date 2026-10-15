@@ -64,7 +64,7 @@ export function DeviceNode(props: NodeProps<Node<DeviceData>>) {
 
   return (
     <div className={'device device-' + type}>
-      <NodeHandles rightOnly={type === 'server'} />
+      <NodeHandles />
       <div className="device-name">{icon} {name}</div>
       {subtitle ? <div className="device-subtitle">{subtitle}</div> : null}
       <div className="device-type">{typeLabel}</div>

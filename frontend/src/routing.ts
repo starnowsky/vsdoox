@@ -15,6 +15,75 @@ export interface RouteItem {
   source: Pt;
   waypoints: Pt[];
   target: Pt;
+  sourceSide: string;
+  targetSide: string;
+}
+
+export const HANDLE_GAP = 12; // gap between connection points on same node side
+
+// Find nearest point on rectangle boundary to a target point
+export function nearestBoundaryPoint(
+  node: { position: { x: number; y: number }; width?: number; height?: number },
+  target: { x: number; y: number },
+): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left' } {
+  const nx = node.position.x;
+  const ny = node.position.y;
+  const w = node.width ?? 150;
+  const h = node.height ?? 60;
+  const cx = nx + w / 2;
+  const cy = ny + h / 2;
+
+  const dx = target.x - cx;
+  const dy = target.y - cy;
+  const absDx = Math.abs(dx);
+  const absDy = Math.abs(dy);
+
+  // Determine which side is closest
+  if (absDx * h > absDy * w) {
+    // Closer to left/right side
+    if (dx > 0) {
+      return { x: nx + w, y: cy, side: 'right' };
+    }
+    return { x: nx, y: cy, side: 'left' };
+  } else {
+    // Closer to top/bottom side
+    if (dy > 0) {
+      return { x: cx, y: ny + h, side: 'bottom' };
+    }
+    return { x: cx, y: ny, side: 'top' };
+  }
+}
+
+// Get connection point with tangential distribution along node side
+function getDistributedPoint(
+  node: { position: { x: number; y: number }; width?: number; height?: number },
+  side: 'top' | 'right' | 'bottom' | 'left',
+  count: number,
+  index: number,
+): { x: number; y: number } {
+  const nx = node.position.x;
+  const ny = node.position.y;
+  const w = node.width ?? 150;
+  const h = node.height ?? 60;
+
+  let baseX = nx + w / 2;
+  let baseY = ny + h / 2;
+
+  if (side === 'left') { baseX = nx; baseY = ny + h / 2; }
+  else if (side === 'right') { baseX = nx + w; baseY = ny + h / 2; }
+  else if (side === 'top') { baseX = nx + w / 2; baseY = ny; }
+  else if (side === 'bottom') { baseX = nx + w / 2; baseY = ny + h; }
+
+  if (count <= 1) return { x: baseX, y: baseY };
+
+  const totalWidth = (count - 1) * HANDLE_GAP;
+  const startOffset = -totalWidth / 2;
+
+  if (side === 'left' || side === 'right') {
+    return { x: baseX, y: baseY + startOffset + index * HANDLE_GAP };
+  } else {
+    return { x: baseX + startOffset + index * HANDLE_GAP, y: baseY };
+  }
 }
 
 const GAP = 14; // отступ = 7 толщин линии (толщина 2px)
@@ -139,13 +208,78 @@ function midpointAlongPath(path: Pt[]): Pt {
   return path[path.length - 1];
 }
 
-export function routeConnections(items: RouteItem[]): Array<{ id: string; d: string; labelPos: Pt }> {
+export function routeConnections(
+  items: RouteItem[],
+  nodes: Map<string, { position: { x: number; y: number }; width?: number; height?: number }>
+): Array<{ id: string; d: string; labelPos: Pt }> {
+  // --- 1. Group by source node and target node for tangential distribution ---
+  const sourceGroups = new Map<string, number[]>();
+  const targetGroups = new Map<string, number[]>();
+
+  items.forEach((it, i) => {
+    if (!sourceGroups.has(it.sourceId)) sourceGroups.set(it.sourceId, []);
+    if (!targetGroups.has(it.targetId)) targetGroups.set(it.targetId, []);
+    sourceGroups.get(it.sourceId)!.push(i);
+    targetGroups.get(it.targetId)!.push(i);
+  });
+
+  // Sort each group by target/source position for deterministic ordering
+  for (const [, group] of sourceGroups) {
+    group.sort((a, b) => {
+      const na = items[a].target;
+      const nb = items[b].target;
+      return na.y - nb.y;
+    });
+  }
+  for (const [, group] of targetGroups) {
+    group.sort((a, b) => {
+      const na = items[a].source;
+      const nb = items[b].source;
+      return na.y - nb.y;
+    });
+  }
+
+  // Apply tangential distribution to source/target points
+  const distributedItems = items.map((it, i) => {
+    const sourceNode = nodes.get(it.sourceId);
+    const targetNode = nodes.get(it.targetId);
+
+    let newSource = it.source;
+    let newTarget = it.target;
+    let newSourceSide = it.sourceSide;
+    let newTargetSide = it.targetSide;
+
+    if (sourceNode) {
+      const sourceGroup = sourceGroups.get(it.sourceId) ?? [];
+      const sourceIndex = sourceGroup.indexOf(i);
+      if (sourceIndex >= 0) {
+        const nearest = nearestBoundaryPoint(sourceNode, { x: it.target.x, y: it.target.y });
+        const distributed = getDistributedPoint(sourceNode, nearest.side, sourceGroup.length, sourceIndex);
+        newSource = { x: distributed.x, y: distributed.y };
+        newSourceSide = nearest.side;
+      }
+    }
+
+    if (targetNode) {
+      const targetGroup = targetGroups.get(it.targetId) ?? [];
+      const targetIndex = targetGroup.indexOf(i);
+      if (targetIndex >= 0) {
+        const nearest = nearestBoundaryPoint(targetNode, { x: it.source.x, y: it.source.y });
+        const distributed = getDistributedPoint(targetNode, nearest.side, targetGroup.length, targetIndex);
+        newTarget = { x: distributed.x, y: distributed.y };
+        newTargetSide = nearest.side;
+      }
+    }
+
+    return { ...it, source: newSource, target: newTarget, sourceSide: newSourceSide, targetSide: newTargetSide };
+  });
+
   // Направление прохода (горизонтальное/вертикальное) для каждой линии.
-  const passH = items.map((it) => Math.abs(it.target.x - it.source.x) >= Math.abs(it.target.y - it.source.y));
+  const passH = distributedItems.map((it) => Math.abs(it.target.x - it.source.x) >= Math.abs(it.target.y - it.source.y));
 
   // Лейны: линии, проходящие через один и тот же МСЭ, разводим, чтобы не ложились друг на друга.
   const fwGroups = new Map<string, number[]>();
-  items.forEach((it, i) => {
+  distributedItems.forEach((it, i) => {
     it.fwIds.forEach((fwId) => {
       if (!fwGroups.has(fwId)) fwGroups.set(fwId, []);
       fwGroups.get(fwId)!.push(i);
@@ -159,7 +293,7 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
     });
   }
 
-  const adjusted = items.map((it, i) => {
+  const adjusted = distributedItems.map((it, i) => {
     const h = passH[i];
     return it.waypoints.map((wp, k) => {
       const fwId = it.fwIds[Math.floor(k / 2)];
@@ -169,12 +303,12 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
     });
   });
 
-  const paths = items.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
+  const paths = distributedItems.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
 
   // Смещение одинаковых маршрутов (одинаковая пара узлов).
-  const offsets: number[] = new Array(items.length).fill(0);
+  const offsets: number[] = new Array(distributedItems.length).fill(0);
   const groups = new Map<string, number[]>();
-  items.forEach((it, i) => {
+  distributedItems.forEach((it, i) => {
     const sig = signature(it);
     if (!groups.has(sig)) groups.set(sig, []);
     groups.get(sig)!.push(i);
@@ -197,7 +331,7 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
   });
 
   // «Мостики»: более новая линия «перепрыгивает» через более старую.
-  const bridges: Bridge[][] = items.map(() => []);
+  const bridges: Bridge[][] = distributedItems.map(() => []);
   for (let i = 0; i < segs.length; i++) {
     for (let j = i + 1; j < segs.length; j++) {
       const s1 = segs[i];
@@ -211,7 +345,7 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
   }
 
   return shifted.map((path, i) => ({
-    id: items[i].id,
+    id: distributedItems[i].id,
     d: buildPath(path, bridges[i]),
     labelPos: midpointAlongPath(path),
   }));

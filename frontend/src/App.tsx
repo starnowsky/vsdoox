@@ -1,10 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { ReactFlow, Background, Controls, MiniMap, useNodesState, type Edge, type Node, type NodeTypes, type Viewport } from '@xyflow/react';
+import { toSvg } from 'html-to-image';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
 import { OrthoEdge } from './edges';
-import { routeConnections } from './routing';
+import { routeConnections, nearestBoundaryPoint } from './routing';
 import {
   authLogin,
   createCustomType,
@@ -159,32 +160,6 @@ function collectFirewalls(nodeId: string, nodes: Node<DeviceData>[]): string[] {
 function connColor(c: Interaction): string {
   const col = c.attributes && typeof c.attributes.color === 'string' ? c.attributes.color : '';
   return col || DEFAULT_CONN_COLOR;
-}
-
-function closestSide(from: { x: number; y: number }, to: { x: number; y: number }): string {
-  const dx = to.x - from.x;
-  const dy = to.y - from.y;
-  if (Math.abs(dx) > Math.abs(dy)) return dx > 0 ? 'right' : 'left';
-  return dy > 0 ? 'bottom' : 'top';
-}
-
-function handlePos(
-  center: { x: number; y: number },
-  size: { w: number; h: number },
-  side: string,
-): { x: number; y: number } {
-  switch (side) {
-    case 'right':
-      return { x: center.x + size.w / 2, y: center.y };
-    case 'left':
-      return { x: center.x - size.w / 2, y: center.y };
-    case 'top':
-      return { x: center.x, y: center.y - size.h / 2 };
-    case 'bottom':
-      return { x: center.x, y: center.y + size.h / 2 };
-    default:
-      return center;
-  }
 }
 
 function absolutePositions(nodes: Node<DeviceData>[]): Map<string, { x: number; y: number }> {
@@ -458,10 +433,16 @@ export default function App() {
       const ts = sizes.get(c.target_id) ?? { w: 130, h: 48 };
       const sc = { x: sp.x + ss.w / 2, y: sp.y + ss.h / 2 };
       const tc = { x: tp.x + ts.w / 2, y: tp.y + ts.h / 2 };
-      const sourceType = nodes.find((n) => n.id === c.source_id)?.type ?? 'server';
-      const targetType = nodes.find((n) => n.id === c.target_id)?.type ?? 'server';
-      const sourceSide = sourceType === 'server' ? 'right' : closestSide(sc, tc);
-      const targetSide = targetType === 'server' ? 'right' : closestSide(tc, sc);
+
+      const sourceNode = nodes.find((n) => n.id === c.source_id);
+      const targetNode = nodes.find((n) => n.id === c.target_id);
+
+      // Use nearest boundary point for connection
+      const sourceNearest = sourceNode ? nearestBoundaryPoint(sourceNode, tc) : { x: sc.x + ss.w / 2, y: sc.y, side: 'right' as const };
+      const targetNearest = targetNode ? nearestBoundaryPoint(targetNode, sc) : { x: tc.x - ts.w / 2, y: tc.y, side: 'left' as const };
+
+      const sourceSide = sourceNearest.side;
+      const targetSide = targetNearest.side;
 
       const parentId = c.attributes && typeof c.attributes.parent_id === 'string' ? c.attributes.parent_id : undefined;
       const fwIds = parentId
@@ -492,15 +473,23 @@ export default function App() {
         sourceId: c.source_id,
         targetId: c.target_id,
         fwIds,
-        source: handlePos(sc, ss, sourceSide),
+        source: sourceNearest,
         waypoints,
-        target: handlePos(tc, ts, targetSide),
+        target: targetNearest,
         sourceSide,
         targetSide,
       };
     });
 
-    const routed = routeConnections(routeItems);
+    // Build nodes map for tangential distribution
+    const nodesMap = new Map(
+      nodes.map((n) => [
+        n.id,
+        { position: n.position, width: n.width, height: n.height },
+      ])
+    );
+
+    const routed = routeConnections(routeItems, nodesMap);
     const routedById = new Map(routed.map((r) => [r.id, r]));
 
     return connections.map((c, idx) => {
@@ -786,12 +775,34 @@ export default function App() {
 
   const handleExportSVG = useCallback(async () => {
     try {
-      const reactFlowInstance = (document.querySelector('.react-flow') as any)?.__reactFlowInstance;
-      if (!reactFlowInstance) {
-        setStatus('Не удалось получить экземпляр React Flow');
+      const wrapper = reactFlowWrapper.current;
+      if (!wrapper) {
+        setStatus('Не найден контейнер схемы');
         return;
       }
-      const svg = await reactFlowInstance.toSVG();
+      // Find the react-flow canvas element (excluding controls/minimap)
+      const canvas = wrapper.querySelector('.react-flow__renderer');
+      if (!canvas) {
+        setStatus('Не удалось найти канву React Flow');
+        return;
+      }
+
+      const svg = await toSvg(canvas as HTMLElement, {
+        backgroundColor: 'var(--surface)',
+        filter: (node) => {
+          // Exclude controls, minimap, and boundary handles
+          if (node instanceof Element) {
+            const className = node.className as string;
+            if (className.includes('react-flow__controls') ||
+                className.includes('react-flow__minimap') ||
+                className.includes('boundary-handle') ||
+                className.includes('diagram-boundary')) {
+              return false;
+            }
+          }
+          return true;
+        },
+      });
       const blob = new Blob([svg], { type: 'image/svg+xml' });
       const url = URL.createObjectURL(blob);
       const a = document.createElement('a');
@@ -1319,6 +1330,8 @@ export default function App() {
                 top: boundary.y,
                 width: boundary.w,
                 height: boundary.h,
+                transform: `translate(${viewport.x}px, ${viewport.y}px) scale(${viewport.zoom})`,
+                transformOrigin: '0 0',
               }}
               onMouseDown={(e) => handleBoundaryDrag(e)}
             >
