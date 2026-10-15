@@ -182,6 +182,8 @@ export async function exportConnectionsXlsx(payload: {
   return res.blob();
 }
 
+// SVG export is handled client-side using React Flow's toSVG
+
 // --- Админка ---
 
 async function adminRequest<T>(path: string, token: string | null, options?: RequestInit): Promise<T> {

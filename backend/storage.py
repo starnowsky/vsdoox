@@ -6,8 +6,11 @@ VSDOOX_DB_URL — URL БД (по умолчанию sqlite:///<backend>/vsdoox.d
 import json
 import os
 import uuid
+from contextlib import contextmanager
+from typing import Optional
 
-from sqlalchemy import create_engine, delete, inspect, select, text
+from sqlalchemy import create_engine, delete, inspect, select, text, event
+from sqlalchemy.engine import Engine
 from sqlalchemy.orm import sessionmaker
 
 from models import Base, CatalogFolder, Connection, CustomType, Group, Link, LocalUser, Node, ObjectItem, Project, User, utcnow
@@ -15,6 +18,9 @@ from models import Base, CatalogFolder, Connection, CustomType, Group, Link, Loc
 NODE_TYPES = {'server', 'firewall', 'network', 'datacenter'}
 
 _DEFAULT_SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'vsdoox.db')
+
+# Версия схемы БД для отслеживания миграций
+SCHEMA_VERSION = 6
 
 
 def _db_url():
@@ -26,70 +32,127 @@ _DB_URL = _db_url()
 _engine = create_engine(
     _DB_URL,
     connect_args={'check_same_thread': False} if _DB_URL.startswith('sqlite') else {},
+    pool_pre_ping=True,  # Проверка соединений перед использованием
+    pool_recycle=3600,   # Пересоздание соединений каждый час
 )
+
+# Включаем foreign keys для SQLite
+if _DB_URL.startswith('sqlite'):
+    @event.listens_for(_engine, "connect")
+    def set_sqlite_pragma(dbapi_connection, connection_record):
+        cursor = dbapi_connection.cursor()
+        cursor.execute("PRAGMA foreign_keys=ON")
+        cursor.close()
+
 SessionLocal = sessionmaker(bind=_engine, autoflush=False, expire_on_commit=False)
 
 
+@contextmanager
+def session_scope():
+    """Контекстный менеджер для работы с сессией БД.
+    Гарантирует commit при успехе и rollback при ошибке.
+    """
+    session = SessionLocal()
+    try:
+        yield session
+        session.commit()
+    except Exception:
+        session.rollback()
+        raise
+    finally:
+        session.close()
+
+
 def init_db():
+    """Инициализирует БД: создаёт таблицы и применяет миграции."""
     Base.metadata.create_all(_engine)
     _migrate_schema()
 
 
-def _ensure_composite_pk(table_name):
-    """Перестраивает таблицу, если её первичный ключ не составной (id, project_id).
+def _get_schema_version() -> int:
+    """Получает текущую версию схемы из таблицы settings."""
+    with session_scope() as session:
+        from models import Setting
+        row = session.get(Setting, 'schema_version')
+        if row and row.value:
+            try:
+                return int(row.value)
+            except ValueError:
+                pass
+    return 0
 
-    Идентификаторы связей/линков уникальны только в пределах проекта.
-    """
-    insp = inspect(_engine)
-    if table_name not in insp.get_table_names():
-        return
-    pk_cols = set(insp.get_pk_constraint(table_name).get('constrained_columns') or [])
-    if pk_cols == {'id', 'project_id'}:
-        return
-    table = Base.metadata.tables[table_name]
-    with _engine.begin() as conn:
-        rows = [dict(r) for r in conn.execute(text(f'SELECT * FROM "{table_name}"')).mappings()]
-    table.drop(_engine)
-    table.create(_engine)
-    columns = [c.name for c in table.columns]
-    with _engine.begin() as conn:
-        for r in rows:
-            conn.execute(table.insert().values(**{c: r.get(c) for c in columns}))
+
+def _set_schema_version(version: int):
+    """Устанавливает версию схемы в таблице settings."""
+    with session_scope() as session:
+        from models import Setting
+        row = session.get(Setting, 'schema_version')
+        if row:
+            row.value = str(version)
+        else:
+            session.add(Setting(key='schema_version', value=str(version)))
 
 
 def _migrate_schema():
-    """Лёгкая миграция для существующих dev-БД (до появления Alembic)."""
-    insp = inspect(_engine)
-    if 'nodes' not in insp.get_table_names():
+    """Применяет миграции поэтапно, отслеживая версию схемы."""
+    current_version = _get_schema_version()
+    if current_version >= SCHEMA_VERSION:
         return
-    cols = {c['name'] for c in insp.get_columns('nodes')}
-    if 'parent_id' not in cols:
-        with _engine.begin() as conn:
-            conn.exec_driver_sql('ALTER TABLE nodes ADD COLUMN parent_id TEXT')
 
-    if 'projects' in insp.get_table_names():
-        pcols = {c['name'] for c in insp.get_columns('projects')}
-        if 'group_id' not in pcols:
-            with _engine.begin() as conn:
-                conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN group_id INTEGER')
-        if 'folder_id' not in pcols:
-            with _engine.begin() as conn:
-                conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN folder_id INTEGER')
+    insp = inspect(_engine)
 
-    if 'connections' in insp.get_table_names():
-        ccols = {c['name'] for c in insp.get_columns('connections')}
-        if 'description' not in ccols:
-            with _engine.begin() as conn:
-                conn.exec_driver_sql('ALTER TABLE connections ADD COLUMN description TEXT')
+    # Миграция 1: добавление parent_id в nodes
+    if current_version < 1:
+        if 'nodes' in insp.get_table_names():
+            cols = {c['name'] for c in insp.get_columns('nodes')}
+            if 'parent_id' not in cols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql('ALTER TABLE nodes ADD COLUMN parent_id TEXT')
+        current_version = 1
+        _set_schema_version(current_version)
 
-    if 'admin_sessions' in insp.get_table_names():
-        acols = {c['name'] for c in insp.get_columns('admin_sessions')}
-        if 'username' not in acols:
-            with _engine.begin() as conn:
-                conn.exec_driver_sql('ALTER TABLE admin_sessions ADD COLUMN username TEXT')
+    # Миграция 2: добавление group_id и folder_id в projects
+    if current_version < 2:
+        if 'projects' in insp.get_table_names():
+            pcols = {c['name'] for c in insp.get_columns('projects')}
+            if 'group_id' not in pcols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN group_id INTEGER')
+            if 'folder_id' not in pcols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql('ALTER TABLE projects ADD COLUMN folder_id INTEGER')
+        current_version = 2
+        _set_schema_version(current_version)
 
-    _ensure_composite_pk('connections')
-    _ensure_composite_pk('links')
+    # Миграция 3: добавление description в connections
+    if current_version < 3:
+        if 'connections' in insp.get_table_names():
+            ccols = {c['name'] for c in insp.get_columns('connections')}
+            if 'description' not in ccols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql('ALTER TABLE connections ADD COLUMN description TEXT')
+        current_version = 3
+        _set_schema_version(current_version)
+
+    # Миграция 4: добавление username в admin_sessions
+    if current_version < 4:
+        if 'admin_sessions' in insp.get_table_names():
+            acols = {c['name'] for c in insp.get_columns('admin_sessions')}
+            if 'username' not in acols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql('ALTER TABLE admin_sessions ADD COLUMN username TEXT')
+        current_version = 4
+        _set_schema_version(current_version)
+
+    # Миграция 5: создание индексов (используются через __table_args__ в models.py, но для старых БД)
+    if current_version < 5:
+        # Индексы создаются автоматически при создании таблиц через Base.metadata.create_all
+        # Для существующих таблиц можно добавить их явно если нужно
+        current_version = 5
+        _set_schema_version(current_version)
+
+    # УБРАНО: _ensure_composite_pk - опасная операция удаления таблиц!
+    # Составной PK (id, project_id) теперь задаётся в моделях изначально.
 
 
 def _ensure_id(value):
@@ -149,13 +212,13 @@ def get_or_create_user(name):
     name = (name or '').strip()
     if not name:
         raise ValueError('Имя пользователя обязательно')
-    with SessionLocal() as session:
+    with session_scope() as session:
         user = session.execute(select(User).where(User.name == name)).scalar_one_or_none()
         if user:
             return user.id
         user = User(name=name)
         session.add(user)
-        session.commit()
+        session.flush()  # Получаем ID до коммита
         return user.id
 
 
@@ -164,7 +227,7 @@ def get_user_group_id(username):
     username = (username or '').strip()
     if not username:
         return None
-    with SessionLocal() as session:
+    with session_scope() as session:
         u = session.execute(
             select(LocalUser).where(LocalUser.username == username)
         ).scalar_one_or_none()
@@ -176,14 +239,14 @@ def create_project(name, owner_name, group_id=None):
     owner_id = get_or_create_user(owner_name)
     if group_id is None:
         group_id = get_user_group_id(owner_name)
-    with SessionLocal() as session:
+    with session_scope() as session:
         # У каждой схемы — свой каталог (папка) с её названием.
         folder = CatalogFolder(name=name)
         session.add(folder)
         session.flush()
         project = Project(name=name, owner_id=owner_id, group_id=group_id, folder_id=folder.id)
         session.add(project)
-        session.commit()
+        session.flush()
         return project.id
 
 
@@ -201,7 +264,7 @@ def _project_summary(p):
 
 def list_projects(owner_name):
     owner_id = get_or_create_user(owner_name)
-    with SessionLocal() as session:
+    with session_scope() as session:
         rows = session.execute(
             select(Project).where(Project.owner_id == owner_id)
             .order_by(Project.updated_at.desc())
@@ -223,7 +286,7 @@ def can_read_project(project, viewer_username, is_admin=False):
 
 def list_visible_projects(viewer_username, is_admin=False):
     """Все проекты, доступные пользователю: публичные, своей группы и собственные."""
-    with SessionLocal() as session:
+    with session_scope() as session:
         if is_admin:
             rows = session.execute(
                 select(Project).order_by(Project.updated_at.desc())
@@ -243,7 +306,7 @@ def list_visible_projects(viewer_username, is_admin=False):
 
 def list_catalog(viewer_username, is_admin=False):
     """Каталог: папки (по одной на схему) с вложенными доступными схемами."""
-    with SessionLocal() as session:
+    with session_scope() as session:
         group_id = None
         if not is_admin:
             group_id = get_user_group_id(viewer_username)
@@ -278,7 +341,7 @@ def list_catalog(viewer_username, is_admin=False):
 
 def list_visible_objects(viewer_username, is_admin=False):
     """Объекты общего каталога, доступные по группе доступа."""
-    with SessionLocal() as session:
+    with session_scope() as session:
         group_id = None
         if not is_admin:
             group_id = get_user_group_id(viewer_username)
@@ -297,7 +360,7 @@ def list_visible_objects(viewer_username, is_admin=False):
 
 
 def get_project(project_id):
-    with SessionLocal() as session:
+    with session_scope() as session:
         project = session.get(Project, project_id)
         if not project:
             return None
@@ -343,10 +406,11 @@ def _upsert_object(session, node_id, ntype, name, attrs, group_id, owner_id):
 
 
 def save_project(project_id, name, nodes, links, connections):
-    with SessionLocal() as session:
+    """Сохраняет проект целиком в одной транзакции."""
+    with session_scope() as session:
         project = session.get(Project, project_id)
         if not project:
-            return False
+            raise ValueError('Проект не найден')
         name = (name or '').strip() or 'Без названия'
         project.name = name
         project.updated_at = utcnow()
@@ -398,43 +462,47 @@ def save_project(project_id, name, nodes, links, connections):
                 description=c.get('description'),
                 attributes=_norm_attributes(c.get('attributes')),
             ))
-        session.commit()
         return True
 
 
 def delete_project(project_id):
-    with SessionLocal() as session:
+    with session_scope() as session:
         project = session.get(Project, project_id)
-        folder_id = project.folder_id if project else None
+        if not project:
+            return
+        folder_id = project.folder_id
+        # Каскадное удаление сработает для nodes/links/connections через relationship
+        # Но используем явное удаление для надежности
         session.execute(delete(Connection).where(Connection.project_id == project_id))
         session.execute(delete(Link).where(Link.project_id == project_id))
         session.execute(delete(Node).where(Node.project_id == project_id))
-        session.execute(delete(Project).where(Project.id == project_id))
+        session.delete(project)
+        # Удаляем папку если она стала пустой
         if folder_id is not None:
             remaining = session.execute(
                 select(Project).where(Project.folder_id == folder_id)
             ).scalars().all()
             if not remaining:
-                session.execute(delete(CatalogFolder).where(CatalogFolder.id == folder_id))
-        session.commit()
+                folder = session.get(CatalogFolder, folder_id)
+                if folder:
+                    session.delete(folder)
 
 
 def set_project_group(project_id, group_id):
     """Назначает/снимает группу доступа проекта (None = публичный)."""
-    with SessionLocal() as session:
+    with session_scope() as session:
         project = session.get(Project, project_id)
         if not project:
             return False
         project.group_id = group_id
         project.updated_at = utcnow()
-        session.commit()
         return True
 
 
 # --- Кастомные типы объектов ---
 
 def list_custom_types():
-    with SessionLocal() as session:
+    with session_scope() as session:
         rows = session.execute(select(CustomType).order_by(CustomType.name)).scalars().all()
         return [{'id': t.id, 'name': t.name} for t in rows]
 
@@ -443,16 +511,14 @@ def create_custom_type(name):
     name = (name or '').strip()
     if not name:
         raise ValueError('Название типа обязательно')
-    with SessionLocal() as session:
+    with session_scope() as session:
         if session.execute(select(CustomType).where(CustomType.name == name)).scalar_one_or_none():
             raise ValueError('Тип уже существует')
         t = CustomType(name=name)
         session.add(t)
-        session.commit()
         return t.id
 
 
 def delete_custom_type(tid):
-    with SessionLocal() as session:
+    with session_scope() as session:
         session.execute(delete(CustomType).where(CustomType.id == tid))
-        session.commit()

@@ -1,7 +1,7 @@
 """SQLAlchemy ORM-модели приложения."""
 from datetime import datetime, timezone
 
-from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import JSON, Column, DateTime, Float, ForeignKey, Integer, String, Text, Index
 from sqlalchemy.orm import declarative_base, relationship
 
 Base = declarative_base()
@@ -11,6 +11,12 @@ def utcnow():
     """Текущее UTC-время без таймзоны (наивное) — простое и предсказуемое
     хранение и на SQLite, и на PostgreSQL."""
     return datetime.now(timezone.utc).replace(tzinfo=None)
+
+
+# Индексы для производительности
+class _Indexes:
+    # Частые запросы: поиск проектов по владельцу и группе
+    pass
 
 
 class User(Base):
@@ -23,6 +29,12 @@ class User(Base):
 
 class Project(Base):
     __tablename__ = 'projects'
+    __table_args__ = (
+        Index('ix_projects_owner_id', 'owner_id'),
+        Index('ix_projects_group_id', 'group_id'),
+        Index('ix_projects_folder_id', 'folder_id'),
+        Index('ix_projects_updated_at', 'updated_at'),
+    )
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     owner_id = Column(Integer, ForeignKey('users.id', ondelete='CASCADE'), nullable=False)
@@ -40,11 +52,16 @@ class Project(Base):
 
 class Node(Base):
     __tablename__ = 'nodes'
+    __table_args__ = (
+        Index('ix_nodes_project_id', 'project_id'),
+        Index('ix_nodes_parent_id', 'parent_id'),
+        Index('ix_nodes_type', 'type'),
+    )
     id = Column(String(64), primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
     type = Column(String(32), nullable=False)
     name = Column(String(255), nullable=False)
-    parent_id = Column(String(64), nullable=True)
+    parent_id = Column(String(64), nullable=True)  # FK removed to avoid SQLite composite FK issues
     x = Column(Float, default=0.0, nullable=False)
     y = Column(Float, default=0.0, nullable=False)
     attributes = Column(JSON, default=dict, nullable=False)
@@ -53,6 +70,11 @@ class Node(Base):
 
 class Link(Base):
     __tablename__ = 'links'
+    __table_args__ = (
+        Index('ix_links_project_id', 'project_id'),
+        Index('ix_links_source_id', 'source_id'),
+        Index('ix_links_target_id', 'target_id'),
+    )
     id = Column(String(64), primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
     source_id = Column(String(64), nullable=False)
@@ -64,6 +86,11 @@ class Link(Base):
 
 class Connection(Base):
     __tablename__ = 'connections'
+    __table_args__ = (
+        Index('ix_connections_project_id', 'project_id'),
+        Index('ix_connections_source_id', 'source_id'),
+        Index('ix_connections_target_id', 'target_id'),
+    )
     id = Column(String(64), primary_key=True)
     project_id = Column(Integer, ForeignKey('projects.id', ondelete='CASCADE'), primary_key=True)
     source_id = Column(String(64), nullable=False)
@@ -96,6 +123,9 @@ class Group(Base):
 
 class LocalUser(Base):
     __tablename__ = 'local_users'
+    __table_args__ = (
+        Index('ix_local_users_group_id', 'group_id'),
+    )
     id = Column(Integer, primary_key=True)
     username = Column(String(120), unique=True, nullable=False)
     password_hash = Column(String(255), nullable=False)
@@ -111,6 +141,9 @@ class CustomType(Base):
 class CatalogFolder(Base):
     """Каталог (папка) внутри общего каталога схем: по одной на каждую схему."""
     __tablename__ = 'catalog_folders'
+    __table_args__ = (
+        Index('ix_catalog_folders_updated_at', 'updated_at'),
+    )
     id = Column(Integer, primary_key=True)
     name = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=utcnow, nullable=False)
@@ -121,6 +154,12 @@ class CatalogFolder(Base):
 class ObjectItem(Base):
     """Объект из схемы, сохранённый в общий каталог объектов (библиотеку)."""
     __tablename__ = 'object_items'
+    __table_args__ = (
+        Index('ix_object_items_group_id', 'group_id'),
+        Index('ix_object_items_owner_id', 'owner_id'),
+        Index('ix_object_items_type', 'type'),
+        Index('ix_object_items_updated_at', 'updated_at'),
+    )
     id = Column(Integer, primary_key=True)
     node_id = Column(String(64), unique=True, nullable=False)
     type = Column(String(32), nullable=False)

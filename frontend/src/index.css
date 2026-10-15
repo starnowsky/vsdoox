@@ -951,3 +951,122 @@ button.del:hover { background: var(--surface-2); }
 }
 .catalog-detail h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
 .catalog-detail .catalog-meta { line-height: 1.7; margin-bottom: 14px; }
+
+/* ---------- Top Actions - Logout Button ---------- */
+.logout-btn {
+  padding: 7px 14px;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  color: var(--text);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: background 0.15s, border-color 0.15s;
+}
+.logout-btn:hover {
+  background: var(--danger);
+  border-color: var(--danger);
+  color: #fff;
+}
+
+/* ---------- React Flow Wrapper ---------- */
+.react-flow-wrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+/* ---------- Diagram Boundary Frame ---------- */
+.diagram-boundary {
+  position: absolute;
+  border: 2px dashed var(--accent);
+  border-radius: 8px;
+  pointer-events: none;
+  user-select: none;
+  z-index: 10;
+  background: var(--accent-soft);
+  transition: border-color 0.15s;
+}
+
+.diagram-boundary:hover {
+  border-color: var(--accent-hover);
+  background: rgba(74, 107, 138, 0.18);
+}
+
+.diagram-boundary.dragging {
+  border-style: solid;
+  cursor: move;
+}
+
+.boundary-handle {
+  position: absolute;
+  width: 14px;
+  height: 14px;
+  background: var(--accent);
+  border: 2px solid var(--surface);
+  border-radius: 50%;
+  pointer-events: auto;
+  cursor: nwse-resize;
+  z-index: 11;
+  box-shadow: var(--shadow-sm);
+  transition: transform 0.1s, box-shadow 0.1s;
+}
+.boundary-handle:hover {
+  transform: scale(1.3);
+  box-shadow: var(--shadow-md);
+}
+.boundary-handle.nw { top: -7px; left: -7px; cursor: nwse-resize; }
+.boundary-handle.n { top: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.boundary-handle.ne { top: -7px; right: -7px; cursor: nesw-resize; }
+.boundary-handle.e { top: 50%; right: -7px; transform: translateY(-50%); cursor: ew-resize; }
+.boundary-handle.se { bottom: -7px; right: -7px; cursor: nwse-resize; }
+.boundary-handle.s { bottom: -7px; left: 50%; transform: translateX(-50%); cursor: ns-resize; }
+.boundary-handle.sw { bottom: -7px; left: -7px; cursor: nesw-resize; }
+.boundary-handle.w { top: 50%; left: -7px; transform: translateY(-50%); cursor: ew-resize; }
+
+.resizing .boundary-handle {
+  cursor: inherit;
+}
+
+.boundary-label {
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--accent);
+  background: var(--surface);
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+  pointer-events: none;
+}
+
+.add-boundary-btn {
+  position: absolute;
+  top: 16px;
+  left: 16px;
+  z-index: 20;
+  padding: 10px 16px;
+  background: var(--accent);
+  color: #fff;
+  border: none;
+  border-radius: var(--radius-sm);
+  font-size: 13px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-md);
+  transition: background 0.15s, transform 0.1s;
+}
+.add-boundary-btn:hover {
+  background: var(--accent-hover);
+  transform: translateY(-1px);
+}
+
+/* ---------- Canvas full height ---------- */
+.canvas .react-flow {
+  height: 100%;
+  width: 100%;
+}

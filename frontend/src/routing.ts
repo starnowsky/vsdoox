@@ -45,7 +45,10 @@ function shiftPath(path: Pt[], d: number): Pt[] {
 }
 
 function signature(it: RouteItem): string {
-  return [it.sourceId, it.targetId, ...it.fwIds].sort().join('>');
+  // Не сортируем — направление важно (A->B и B->A — разные сигнатуры).
+  // fwIds не включаем, чтобы линии с одинаковыми source/target, но разными МСЭ,
+  // всё равно разводились глобально (в начале/конце пути).
+  return `${it.sourceId}>${it.targetId}`;
 }
 
 interface Seg {
@@ -168,11 +171,10 @@ export function routeConnections(items: RouteItem[]): Array<{ id: string; d: str
 
   const paths = items.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
 
-  // Смещение одинаковых маршрутов (одинаковая пара узлов без МСЭ).
+  // Смещение одинаковых маршрутов (одинаковая пара узлов).
   const offsets: number[] = new Array(items.length).fill(0);
   const groups = new Map<string, number[]>();
   items.forEach((it, i) => {
-    if (it.fwIds.length > 0) return; // уже разведены лейнами
     const sig = signature(it);
     if (!groups.has(sig)) groups.set(sig, []);
     groups.get(sig)!.push(i);

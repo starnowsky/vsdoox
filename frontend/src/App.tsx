@@ -1,6 +1,5 @@
-import { useCallback, useEffect, useMemo, useState } from 'react';
-import { ReactFlow, Background, Controls, MiniMap, useNodesState } from '@xyflow/react';
-import type { Edge, Node, NodeTypes } from '@xyflow/react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { ReactFlow, Background, Controls, MiniMap, useNodesState, type Edge, type Node, type NodeTypes, type Viewport } from '@xyflow/react';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
@@ -432,6 +431,11 @@ export default function App() {
   const [showConnTable, setShowConnTable] = useState(false);
   const [library, setLibrary] = useState<ObjectItem[]>([]);
 
+  // Diagram boundary frame state
+  const [boundary, setBoundary] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
+  const reactFlowWrapper = useRef<HTMLDivElement>(null);
+  const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
+
   const displayNodes = useMemo(() => applySizes(nodes), [nodes]);
 
   const rfNodeTypes = useMemo<NodeTypes>(() => {
@@ -780,6 +784,122 @@ export default function App() {
     }
   }, [nodes, connections, projectName]);
 
+  const handleExportSVG = useCallback(async () => {
+    try {
+      const reactFlowInstance = (document.querySelector('.react-flow') as any)?.__reactFlowInstance;
+      if (!reactFlowInstance) {
+        setStatus('Не удалось получить экземпляр React Flow');
+        return;
+      }
+      const svg = await reactFlowInstance.toSVG();
+      const blob = new Blob([svg], { type: 'image/svg+xml' });
+      const url = URL.createObjectURL(blob);
+      const a = document.createElement('a');
+      a.href = url;
+      a.download = (projectName || 'Схема') + '.svg';
+      a.click();
+      URL.revokeObjectURL(url);
+      setStatus('Схема экспортирована в SVG');
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  }, [projectName]);
+
+  const handleBoundaryMouseDown = useCallback((e: React.MouseEvent, handle: string) => {
+    e.stopPropagation();
+    e.preventDefault();
+    const wrapper = reactFlowWrapper.current;
+    if (wrapper) {
+      const moveHandler = (moveEvent: MouseEvent) => {
+        if (!boundary) return;
+        const rect = wrapper.getBoundingClientRect();
+        const x = (moveEvent.clientX - rect.left - viewport.x) / viewport.zoom;
+        const y = (moveEvent.clientY - rect.top - viewport.y) / viewport.zoom;
+
+        setBoundary((prev) => {
+          if (!prev) return prev;
+          const newBoundary = { ...prev };
+          switch (handle) {
+            case 'nw':
+              newBoundary.w += prev.x - x;
+              newBoundary.h += prev.y - y;
+              newBoundary.x = x;
+              newBoundary.y = y;
+              break;
+            case 'n':
+              newBoundary.h += prev.y - y;
+              newBoundary.y = y;
+              break;
+            case 'ne':
+              newBoundary.w = x - prev.x;
+              newBoundary.h += prev.y - y;
+              newBoundary.y = y;
+              break;
+            case 'e':
+              newBoundary.w = x - prev.x;
+              break;
+            case 'se':
+              newBoundary.w = x - prev.x;
+              newBoundary.h = y - prev.y;
+              break;
+            case 's':
+              newBoundary.h = y - prev.y;
+              break;
+            case 'sw':
+              newBoundary.w += prev.x - x;
+              newBoundary.h = y - prev.y;
+              newBoundary.x = x;
+              break;
+            case 'w':
+              newBoundary.w += prev.x - x;
+              newBoundary.x = x;
+              break;
+          }
+          // Minimum size
+          newBoundary.w = Math.max(100, newBoundary.w);
+          newBoundary.h = Math.max(100, newBoundary.h);
+          return newBoundary;
+        });
+      };
+      const upHandler = () => {
+        window.removeEventListener('mousemove', moveHandler);
+        window.removeEventListener('mouseup', upHandler);
+      };
+      window.addEventListener('mousemove', moveHandler);
+      window.addEventListener('mouseup', upHandler);
+    }
+  }, [boundary, viewport]);
+
+  const handleBoundaryDrag = useCallback((e: React.MouseEvent) => {
+    e.stopPropagation();
+    if (!boundary) return;
+    const wrapper = reactFlowWrapper.current;
+    if (!wrapper) return;
+    const startX = e.clientX;
+    const startY = e.clientY;
+    const startBoundary = { ...boundary };
+
+    const moveHandler = (moveEvent: MouseEvent) => {
+      const dx = (moveEvent.clientX - startX) / viewport.zoom;
+      const dy = (moveEvent.clientY - startY) / viewport.zoom;
+      setBoundary({
+        ...startBoundary,
+        x: startBoundary.x + dx,
+        y: startBoundary.y + dy,
+      });
+    };
+    const upHandler = () => {
+      window.removeEventListener('mousemove', moveHandler);
+      window.removeEventListener('mouseup', upHandler);
+    };
+    window.addEventListener('mousemove', moveHandler);
+    window.addEventListener('mouseup', upHandler);
+  }, [boundary, viewport]);
+
+  const handleViewportChange = useCallback((v: Viewport) => {
+    setViewport(v);
+  }, []);
+
   const handleLoad = useCallback(
     async (id: number) => {
       try {
@@ -896,6 +1016,7 @@ export default function App() {
       <div className="top-actions">
         <button className="admin-btn" onClick={() => window.open('/catalog', '_blank')} title="Каталог проектов">каталог</button>
         <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
+        <button className="logout-btn" onClick={handleLogout} title="Выйти">Выход</button>
       </div>
       <aside className="sidebar">
         <div className="sidebar-header">
@@ -923,6 +1044,7 @@ export default function App() {
               </button>
             </div>
             <button onClick={handleExport}>Скачать .vsdx</button>
+            <button onClick={handleExportSVG}>Экспорт SVG</button>
             <button onClick={() => setShowConnTable(true)}>Таблица протоколов/портов</button>
 
             <section>
@@ -938,6 +1060,24 @@ export default function App() {
                   </li>
                 ))}
               </ul>
+            </section>
+
+            <section>
+              <label>Объекты на схеме</label>
+              {nodes.length === 0 ? (
+                <div className="muted">Объектов пока нет</div>
+              ) : (
+                <ul className="projects">
+                  {nodes.map((n) => (
+                    <li key={n.id}>
+                      <button className="link" onClick={() => openEdit(n.id)}>
+                        {n.data.name} <span className="conn-meta">{typeName(n.type ?? '')}</span>
+                      </button>
+                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
+                    </li>
+                  ))}
+                </ul>
+              )}
             </section>
 
             <section>
@@ -1034,7 +1174,6 @@ export default function App() {
                       <button className="link" onClick={() => openEdit(n.id)}>
                         {n.data.name} <span className="conn-meta">{typeName(n.type ?? '')}</span>
                       </button>
-                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
                     </li>
                   ))}
                 </ul>
@@ -1154,20 +1293,66 @@ export default function App() {
       </aside>
 
       <main className="canvas">
-        <ReactFlow
-          nodes={displayNodes}
-          edges={edges}
-          onNodesChange={onNodesChange}
-          onNodeDoubleClick={(_event, node) => openEdit(node.id)}
-          nodeTypes={rfNodeTypes}
-          edgeTypes={edgeTypes}
-          zIndexMode="manual"
-          fitView
-        >
-          <Background color={theme === 'dark' ? '#2a3340' : '#e2e6ea'} />
-          <Controls />
-          <MiniMap />
-        </ReactFlow>
+        <div ref={reactFlowWrapper} className="react-flow-wrapper">
+          <ReactFlow
+            nodes={displayNodes}
+            edges={edges}
+            onNodesChange={onNodesChange}
+            onViewportChange={handleViewportChange}
+            onNodeDoubleClick={(_event, node) => openEdit(node.id)}
+            nodeTypes={rfNodeTypes}
+            edgeTypes={edgeTypes}
+            zIndexMode="manual"
+            fitView
+          >
+            <Background color={theme === 'dark' ? '#2a3340' : '#e2e6ea'} />
+            <Controls />
+            <MiniMap />
+          </ReactFlow>
+
+          {/* Diagram Boundary Frame */}
+          {boundary && (
+            <div
+              className="diagram-boundary"
+              style={{
+                left: boundary.x,
+                top: boundary.y,
+                width: boundary.w,
+                height: boundary.h,
+              }}
+              onMouseDown={(e) => handleBoundaryDrag(e)}
+            >
+              {/* Corner handles */}
+              <div className="boundary-handle nw" onMouseDown={(e) => handleBoundaryMouseDown(e, 'nw')} />
+              <div className="boundary-handle n" onMouseDown={(e) => handleBoundaryMouseDown(e, 'n')} />
+              <div className="boundary-handle ne" onMouseDown={(e) => handleBoundaryMouseDown(e, 'ne')} />
+              <div className="boundary-handle e" onMouseDown={(e) => handleBoundaryMouseDown(e, 'e')} />
+              <div className="boundary-handle se" onMouseDown={(e) => handleBoundaryMouseDown(e, 'se')} />
+              <div className="boundary-handle s" onMouseDown={(e) => handleBoundaryMouseDown(e, 's')} />
+              <div className="boundary-handle sw" onMouseDown={(e) => handleBoundaryMouseDown(e, 'sw')} />
+              <div className="boundary-handle w" onMouseDown={(e) => handleBoundaryMouseDown(e, 'w')} />
+              <div className="boundary-label">Граница схемы</div>
+            </div>
+          )}
+
+          {!boundary && (
+            <button
+              className="add-boundary-btn"
+              onClick={() => {
+                const wrapper = reactFlowWrapper.current;
+                if (wrapper) {
+                  const rect = wrapper.getBoundingClientRect();
+                  // Center the boundary in the viewport
+                  const centerX = (-viewport.x + rect.width / 2) / viewport.zoom;
+                  const centerY = (-viewport.y + rect.height / 2) / viewport.zoom;
+                  setBoundary({ x: centerX - 200, y: centerY - 150, w: 400, h: 300 });
+                }
+              }}
+            >
+              + Добавить границу схемы
+            </button>
+          )}
+        </div>
       </main>
 
       {editingNode && editingType && (
