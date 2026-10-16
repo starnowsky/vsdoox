@@ -309,6 +309,8 @@ export function routeConnections(
   const offsets: number[] = new Array(distributedItems.length).fill(0);
   const groups = new Map<string, number[]>();
   distributedItems.forEach((it, i) => {
+    // Skip connections that pass through firewalls — they are already distributed by lanes
+    if (it.fwIds.length > 0) return;
     const sig = signature(it);
     if (!groups.has(sig)) groups.set(sig, []);
     groups.get(sig)!.push(i);

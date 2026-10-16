@@ -159,6 +159,17 @@ function collectFirewalls(nodeId: string, nodes: Node<DeviceData>[]): string[] {
   return [...new Set(fws)];
 }
 
+// Firewalls that the connection actually crosses (symmetric difference)
+// = firewalls of source that are NOT in target + firewalls of target that are NOT in source
+function crossedFirewalls(sourceId: string, targetId: string, nodes: Node<DeviceData>[]): string[] {
+  const sourceFws = collectFirewalls(sourceId, nodes);
+  const targetFws = collectFirewalls(targetId, nodes);
+  return [
+    ...sourceFws.filter((id) => !targetFws.includes(id)),
+    ...targetFws.filter((id) => !sourceFws.includes(id)),
+  ];
+}
+
 function connColor(c: Interaction): string {
   const col = c.attributes && typeof c.attributes.color === 'string' ? c.attributes.color : '';
   return col || DEFAULT_CONN_COLOR;
@@ -453,9 +464,7 @@ export default function App() {
       const parentId = c.attributes && typeof c.attributes.parent_id === 'string' ? c.attributes.parent_id : undefined;
       const fwIds = parentId
         ? [parentId]
-        : [...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)])].filter(
-            (id) => id !== c.source_id && id !== c.target_id,
-          );
+        : crossedFirewalls(c.source_id, c.target_id, nodes);
       // Проход сквозь МСЭ — через края (вход/выход), а не через центр узла.
       const horizontalPass = Math.abs(tc.x - sc.x) >= Math.abs(tc.y - sc.y);
       const passDir = horizontalPass ? (tc.x >= sc.x ? 1 : -1) : (tc.y >= sc.y ? 1 : -1);
@@ -665,9 +674,7 @@ export default function App() {
 
   const showConnection = useCallback(
     (c: Interaction) => {
-      const firewalls = [
-        ...new Set([...collectFirewalls(c.source_id, nodes), ...collectFirewalls(c.target_id, nodes)]),
-      ];
+      const firewalls = crossedFirewalls(c.source_id, c.target_id, nodes);
       setPathResult({ found: true, path: [c.source_id, ...firewalls, c.target_id], firewalls });
       setStatus(firewalls.length ? 'МЭ на пути: ' + firewalls.length : 'В пределах одного ЦОД');
     },
