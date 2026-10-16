@@ -466,8 +466,13 @@ export default function App() {
         ? [parentId]
         : crossedFirewalls(c.source_id, c.target_id, nodes);
       // Проход сквозь МСЭ — через края (вход/выход), а не через центр узла.
+      // Точки входа/выхода выравниваются по естественному уровню линии (середина
+      // между источником и назначением), ограниченному размерами МСЭ — это
+      // минимизирует длину маршрута.
       const horizontalPass = Math.abs(tc.x - sc.x) >= Math.abs(tc.y - sc.y);
       const passDir = horizontalPass ? (tc.x >= sc.x ? 1 : -1) : (tc.y >= sc.y ? 1 : -1);
+      const naturalX = (sc.x + tc.x) / 2;
+      const naturalY = (sc.y + tc.y) / 2;
       const waypoints: Array<{ x: number; y: number }> = [];
       for (const id of fwIds) {
         const p = abs.get(id) ?? { x: 0, y: 0 };
@@ -475,11 +480,13 @@ export default function App() {
         const cx = p.x + s.w / 2;
         const cy = p.y + s.h / 2;
         if (horizontalPass) {
-          waypoints.push({ x: cx - passDir * (s.w / 2), y: cy });
-          waypoints.push({ x: cx + passDir * (s.w / 2), y: cy });
+          const y = Math.max(p.y, Math.min(p.y + s.h, naturalY));
+          waypoints.push({ x: cx - passDir * (s.w / 2), y });
+          waypoints.push({ x: cx + passDir * (s.w / 2), y });
         } else {
-          waypoints.push({ x: cx, y: cy - passDir * (s.h / 2) });
-          waypoints.push({ x: cx, y: cy + passDir * (s.h / 2) });
+          const x = Math.max(p.x, Math.min(p.x + s.w, naturalX));
+          waypoints.push({ x, y: cy - passDir * (s.h / 2) });
+          waypoints.push({ x, y: cy + passDir * (s.h / 2) });
         }
       }
 

@@ -38,19 +38,22 @@ export function nearestBoundaryPoint(
   const absDx = Math.abs(dx);
   const absDy = Math.abs(dy);
 
-  // Determine which side is closest
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
+
+  // Determine which side is closest, then return the nearest point ON that side
+  // (clamped projection of the target onto the side) to minimise line length.
   if (absDx * h > absDy * w) {
     // Closer to left/right side
     if (dx > 0) {
-      return { x: nx + w, y: cy, side: 'right' };
+      return { x: nx + w, y: clamp(target.y, ny, ny + h), side: 'right' };
     }
-    return { x: nx, y: cy, side: 'left' };
+    return { x: nx, y: clamp(target.y, ny, ny + h), side: 'left' };
   } else {
     // Closer to top/bottom side
     if (dy > 0) {
-      return { x: cx, y: ny + h, side: 'bottom' };
+      return { x: clamp(target.x, nx, nx + w), y: ny + h, side: 'bottom' };
     }
-    return { x: cx, y: ny, side: 'top' };
+    return { x: clamp(target.x, nx, nx + w), y: ny, side: 'top' };
   }
 }
 
@@ -60,6 +63,7 @@ function getDistributedPoint(
   side: 'top' | 'right' | 'bottom' | 'left',
   count: number,
   index: number,
+  base?: { x: number; y: number },
 ): { x: number; y: number } {
   const nx = node.position.x;
   const ny = node.position.y;
@@ -74,15 +78,20 @@ function getDistributedPoint(
   else if (side === 'top') { baseX = nx + w / 2; baseY = ny; }
   else if (side === 'bottom') { baseX = nx + w / 2; baseY = ny + h; }
 
+  // Use the nearest boundary point as the base when provided (minimises length)
+  if (base) { baseX = base.x; baseY = base.y; }
+
   if (count <= 1) return { x: baseX, y: baseY };
 
   const totalWidth = (count - 1) * HANDLE_GAP;
   const startOffset = -totalWidth / 2;
 
   if (side === 'left' || side === 'right') {
-    return { x: baseX, y: baseY + startOffset + index * HANDLE_GAP };
+    const y = baseY + startOffset + index * HANDLE_GAP;
+    return { x: baseX, y: Math.max(ny, Math.min(ny + h, y)) };
   } else {
-    return { x: baseX + startOffset + index * HANDLE_GAP, y: baseY };
+    const x = baseX + startOffset + index * HANDLE_GAP;
+    return { x: Math.max(nx, Math.min(nx + w, x)), y: baseY };
   }
 }
 
@@ -254,7 +263,7 @@ export function routeConnections(
       const sourceIndex = sourceGroup.indexOf(i);
       if (sourceIndex >= 0) {
         const nearest = nearestBoundaryPoint(sourceNode, { x: it.target.x, y: it.target.y });
-        const distributed = getDistributedPoint(sourceNode, nearest.side, sourceGroup.length, sourceIndex);
+        const distributed = getDistributedPoint(sourceNode, nearest.side, sourceGroup.length, sourceIndex, nearest);
         newSource = { x: distributed.x, y: distributed.y };
         newSourceSide = nearest.side;
       }
@@ -265,7 +274,7 @@ export function routeConnections(
       const targetIndex = targetGroup.indexOf(i);
       if (targetIndex >= 0) {
         const nearest = nearestBoundaryPoint(targetNode, { x: it.source.x, y: it.source.y });
-        const distributed = getDistributedPoint(targetNode, nearest.side, targetGroup.length, targetIndex);
+        const distributed = getDistributedPoint(targetNode, nearest.side, targetGroup.length, targetIndex, nearest);
         newTarget = { x: distributed.x, y: distributed.y };
         newTargetSide = nearest.side;
       }
