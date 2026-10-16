@@ -8,6 +8,9 @@
     "build": "tsc --noEmit && vite build",
     "preview": "vite preview"
   },
+  "sideEffects": [
+    "src/routing.ts"
+  ],
   "dependencies": {
     "@xyflow/react": "^12.3.0",
     "html-to-image": "^1.11.11",

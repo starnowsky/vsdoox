@@ -350,3 +350,18 @@ export function routeConnections(
     labelPos: midpointAlongPath(path),
   }));
 }
+
+// Force inclusion in bundle (prevents tree-shaking of routing functions)
+export const ROUTING_SYMBOLS = {
+  routeConnections,
+  nearestBoundaryPoint,
+  HANDLE_GAP,
+  getDistributedPoint,
+  orthoPath,
+  shiftPath,
+  crossing,
+  buildPath,
+  midpointAlongPath,
+  signature,
+} as const;
+

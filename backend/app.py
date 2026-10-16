@@ -17,6 +17,21 @@ CORS(app)
 storage.init_db()
 admin.init_admin_key_from_env()
 
+# Cache-Control: HTML pages (/, /admin, /catalog) — no cache
+# Static assets (/assets/*) — long-term cache with immutable
+@app.after_request
+def add_cache_headers(response):
+    path = request.path
+    if path == '/' or path == '/admin' or path == '/catalog':
+        # HTML entry points: always revalidate
+        response.headers['Cache-Control'] = 'no-cache, no-store, must-revalidate'
+        response.headers['Pragma'] = 'no-cache'
+        response.headers['Expires'] = '0'
+    elif path.startswith('/assets/'):
+        # Hashed assets: cache forever (Vite uses content hashes in filenames)
+        response.headers['Cache-Control'] = 'public, max-age=31536000, immutable'
+    return response
+
 LAYOUTS = {'grid', 'horizontal', 'vertical', 'circle'}
 INVALID_FILENAME_CHARS = re.compile(r'[\\/:*?"<>|]')
 

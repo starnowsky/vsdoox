@@ -5,7 +5,9 @@ import { toSvg } from 'html-to-image';
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
 import { OrthoEdge } from './edges';
-import { routeConnections, nearestBoundaryPoint } from './routing';
+import { routeConnections, nearestBoundaryPoint, ROUTING_SYMBOLS } from './routing';
+// eslint-disable-next-line no-unused-vars
+void ROUTING_SYMBOLS;
 import {
   authLogin,
   createCustomType,

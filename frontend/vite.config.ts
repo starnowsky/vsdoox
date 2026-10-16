@@ -12,5 +12,12 @@ export default defineConfig({
   build: {
     outDir: 'dist',
     emptyOutDir: true,
+    minify: 'esbuild',
+    esbuild: {
+      treeShaking: false,
+    },
+    rollupOptions: {
+      treeshake: false,
+    },
   },
 });
