@@ -439,9 +439,13 @@ export default function App() {
       const sourceNode = nodes.find((n) => n.id === c.source_id);
       const targetNode = nodes.find((n) => n.id === c.target_id);
 
-      // Use nearest boundary point for connection
-      const sourceNearest = sourceNode ? nearestBoundaryPoint(sourceNode, tc) : { x: sc.x + ss.w / 2, y: sc.y, side: 'right' as const };
-      const targetNearest = targetNode ? nearestBoundaryPoint(targetNode, sc) : { x: tc.x - ts.w / 2, y: tc.y, side: 'left' as const };
+      // Use nearest boundary point for connection with ABSOLUTE position and REAL sizes
+      const sourceNearest = sourceNode
+        ? nearestBoundaryPoint({ position: sp, width: ss.w, height: ss.h }, tc)
+        : { x: sc.x + ss.w / 2, y: sc.y, side: 'right' as const };
+      const targetNearest = targetNode
+        ? nearestBoundaryPoint({ position: tp, width: ts.w, height: ts.h }, sc)
+        : { x: tc.x - ts.w / 2, y: tc.y, side: 'left' as const };
 
       const sourceSide = sourceNearest.side;
       const targetSide = targetNearest.side;
@@ -483,12 +487,13 @@ export default function App() {
       };
     });
 
-    // Build nodes map for tangential distribution
+    // Build nodes map for tangential distribution (absolute positions + real sizes)
     const nodesMap = new Map(
-      nodes.map((n) => [
-        n.id,
-        { position: n.position, width: n.width, height: n.height },
-      ])
+      nodes.map((n) => {
+        const p = abs.get(n.id) ?? { x: 0, y: 0 };
+        const s = sizes.get(n.id) ?? { w: 130, h: 48 };
+        return [n.id, { position: { x: p.x, y: p.y }, width: s.w, height: s.h }];
+      })
     );
 
     const routed = routeConnections(routeItems, nodesMap);
