@@ -1,6 +1,7 @@
 import io
 import math
 import re
+from lxml import etree
 
 # Размеры страницы (в дюймах, Visio использует дюймы)
 PAGE_W = 11.0
@@ -12,7 +13,31 @@ NODE_H = 0.75
 MARGIN_X = 1.0
 MARGIN_Y = 1.0
 
+# Отступ «хвоста» коннектора ниже нижней грани узла (дюймы, 30 px при 100 px/дюйм)
+STUB_INCHES = 30.0 / 100.0
+
 HEX_COLOR_RE = re.compile(r'^#[0-9A-Fa-f]{6}$')
+
+VISIO_NS = 'http://schemas.microsoft.com/office/visio/2012/main'
+REL_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/relationships'
+CT_NS = 'http://schemas.openxmlformats.org/package/2006/content-types'
+CORE_PROPS_NS = 'http://schemas.openxmlformats.org/package/2006/metadata/core-properties'
+DC_NS = 'http://purl.org/dc/elements/1.1/'
+DCTERMS_NS = 'http://purl.org/dc/terms/'
+XSI_NS = 'http://www.w3.org/2001/XMLSchema-instance'
+EXT_PROPS_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/extended-properties'
+VT_NS = 'http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes'
+XML_NS = 'http://www.w3.org/XML/1998/namespace'
+
+NSMAP = {
+    None: VISIO_NS,
+    'r': REL_NS,
+    'cp': CORE_PROPS_NS,
+    'dc': DC_NS,
+    'dcterms': DCTERMS_NS,
+    'xsi': XSI_NS,
+    'vt': VT_NS,
+}
 
 
 def _xml_escape(value):
@@ -52,6 +77,114 @@ def _node_label(node):
     if t == 'network' and attrs.get('cidr'):
         return name + ' · ' + str(attrs['cidr'])
     return name
+
+
+# ---------- Вспомогательные конструкторы XML через lxml ----------
+
+def _cell(name, val):
+    return etree.Element('Cell', N=name, V=str(val))
+
+
+def _row(etype, ix, cells):
+    row = etree.Element('Row', T=etype, IX=str(ix))
+    for c in cells:
+        row.append(c)
+    return row
+
+
+def _section(name, rows):
+    section = etree.Element('Section', N=name)
+    for r in rows:
+        section.append(r)
+    return section
+
+
+def _shape(sid, name_u, pin_x, pin_y, w, h, text='', fill=None, border=None,
+           char_size='0.1667', char_color='#333333', line_weight='0.015',
+           end_arrow=None, line_color=None, geometry_rows=None,
+           connection_points=None, extra_cells=None):
+    """Собирает <Shape> со всеми разделами Visio."""
+    attrs = {
+        'ID': str(sid),
+        'NameU': name_u,
+        'Type': 'Shape',
+        'LineStyle': '0',
+        'FillStyle': '0',
+        'TextStyle': '0',
+    }
+    shape = etree.Element('Shape', **attrs)
+
+    cells = [
+        _cell('PinX', round(pin_x, 3)),
+        _cell('PinY', round(pin_y, 3)),
+        _cell('Width', round(w, 3)),
+        _cell('Height', round(h, 3)),
+        _cell('LocPinX', round(w / 2, 3)),
+        _cell('LocPinY', round(h / 2, 3)),
+        _cell('Angle', 0),
+        _cell('FlipX', 0),
+        _cell('FlipY', 0),
+        _cell('ResizeMode', 0),
+    ]
+    if extra_cells:
+        cells.extend(extra_cells)
+
+    # Основной раздел ячеек (без Section N — прямой список Cell в Shape)
+    for c in cells:
+        shape.append(c)
+
+    if geometry_rows:
+        shape.append(_section('Geometry', geometry_rows))
+
+    if connection_points:
+        cp_rows = []
+        for i, (cx, cy, ctype) in enumerate(connection_points, start=1):
+            cp_rows.append(_row('X', i, [_cell('X', round(cx, 3)),
+                                         _cell('Y', round(cy, 3)),
+                                         _cell('Type', ctype)]))
+        cp_section = etree.Element('Section', N='Connection Points')
+        for r in cp_rows:
+            cp_section.append(r)
+        shape.append(cp_section)
+
+    if fill is not None:
+        shape.append(_section('Fill', [
+            _cell('FillForegnd', fill),
+            _cell('FillBkgnd', fill),
+            _cell('FillPattern', 1),
+        ]))
+
+    if border is not None or line_color is not None:
+        line_cells = []
+        if border is not None:
+            line_cells.append(_cell('LineColor', border))
+        if line_color is not None:
+            line_cells.append(_cell('LineColor', line_color))
+        line_cells.append(_cell('LineWeight', line_weight))
+        if end_arrow is not None:
+            line_cells.append(_cell('EndArrow', end_arrow))
+        shape.append(_section('Line', line_cells))
+
+    shape.append(_section('Character', [
+        _cell('Size', char_size),
+        _cell('Color', char_color),
+    ]))
+
+    if text:
+        text_el = etree.Element('Text')
+        text_el.text = _xml_escape(text)
+        shape.append(text_el)
+
+    return shape
+
+
+def _connector_geometry_rows(points):
+    """Геометрия ортогонального коннектора: список (x, y) точек в локальных coords."""
+    rows = []
+    for i, (x, y) in enumerate(points):
+        etype = 'MoveTo' if i == 0 else 'LineTo'
+        rows.append(_row(etype, i + 1, [_cell('X', round(x, 3)), _cell('Y', round(y, 3))]))
+    return rows
 
 
 def compute_layout(nodes, edges, layout='grid'):
@@ -128,275 +261,11 @@ class VisioGenerator:
 
     def build(self, nodes, edges, layout='grid'):
         positions = compute_layout(nodes, edges, layout)
-
-        # Собираем минимальный .vsdx вручную: VSDX — это ZIP-контейнер (OPC)
-        # с XML-частями (document, pages, page1 и их relationships).
-        import zipfile
-        buf = io.BytesIO()
-
-        with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
-            # [Content_Types].xml
-            z.writestr('[Content_Types].xml', self._content_types())
-
-            # _rels/.rels
-            z.writestr('_rels/.rels', self._root_rels())
-
-            # docProps (обязательные для открытия в Visio)
-            z.writestr('docProps/core.xml', self._core_props_xml())
-            z.writestr('docProps/app.xml', self._app_props_xml())
-
-            # visio/document.xml
-            z.writestr('visio/document.xml', self._document_xml())
-
-            # visio/_rels/document.xml.rels
-            z.writestr('visio/_rels/document.xml.rels', self._document_rels())
-
-            # visio/pages/pages.xml
-            z.writestr('visio/pages/pages.xml', self._pages_xml())
-
-            # visio/pages/_rels/pages.xml.rels
-            z.writestr('visio/pages/_rels/pages.xml.rels',
-                       self._pages_rels())
-
-            # visio/pages/page1.xml
-            z.writestr('visio/pages/page1.xml',
-                       self._page_xml(nodes, edges, positions))
-            z.writestr('visio/masters/masters.xml', self._masters_xml())
-            z.writestr('visio/masters/_rels/masters.xml.rels', self._masters_rels())
-            z.writestr('visio/windows.xml', self._windows_xml())
-
-        buf.seek(0)
-        return buf.read()
-
-    # ---------- Шаблоны XML ----------
-
-    def _content_types(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Types xmlns="http://schemas.openxmlformats.org/package/2006/content-types">
-  <Default Extension="rels" ContentType="application/vnd.openxmlformats-package.relationships+xml"/>
-  <Default Extension="xml" ContentType="application/xml"/>
-  <Override PartName="/visio/document.xml" ContentType="application/vnd.ms-visio.drawing.main+xml"/>
-  <Override PartName="/visio/pages/pages.xml" ContentType="application/vnd.ms-visio.pages+xml"/>
-  <Override PartName="/visio/pages/page1.xml" ContentType="application/vnd.ms-visio.page+xml"/>
-  <Override PartName="/visio/masters/masters.xml" ContentType="application/vnd.ms-visio.masters+xml"/>
-  <Override PartName="/visio/windows.xml" ContentType="application/vnd.ms-visio.windows+xml"/>
-  <Override PartName="/docProps/core.xml" ContentType="application/vnd.openxmlformats-package.core-properties+xml"/>
-  <Override PartName="/docProps/app.xml" ContentType="application/vnd.openxmlformats-officedocument.extended-properties+xml"/>
-</Types>'''
-
-    def _root_rels(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/document" Target="visio/document.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties" Target="docProps/core.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties" Target="docProps/app.xml"/>
-</Relationships>'''
-
-    def _document_rels(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/pages" Target="pages/pages.xml"/>
-  <Relationship Id="rId2" Type="http://schemas.microsoft.com/visio/2010/relationships/windows" Target="windows.xml"/>
-  <Relationship Id="rId3" Type="http://schemas.microsoft.com/visio/2010/relationships/masters" Target="masters/masters.xml"/>
-</Relationships>'''
-
-    def _pages_rels(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-  <Relationship Id="rId1" Type="http://schemas.microsoft.com/visio/2010/relationships/page" Target="page1.xml"/>
-</Relationships>'''
-
-    def _document_xml(self):
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<VisioDocument xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve">
-  <DocumentSettings TopPage="0" DefaultTextStyle="0" DefaultLineStyle="0" DefaultFillStyle="0"/>
-  <Colors/>
-  <FaceNames/>
-  <StyleSheets/>
-  <DocumentSheet NameU="TheDoc" LineStyle="0" FillStyle="0" TextStyle="0">
-    <Shapes/>
-  </DocumentSheet>
-</VisioDocument>'''
-
-    def _masters_xml(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Masters xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-</Masters>'''
-
-    def _masters_rels(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Relationships xmlns="http://schemas.openxmlformats.org/package/2006/relationships">
-</Relationships>'''
-
-    def _windows_xml(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Windows xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve" ClientWidth="1239" ClientHeight="846" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships">
-  <Window ID="0" WindowType="Drawing" WindowState="1073741824" WindowLeftX="0" WindowTopY="0" WindowWidth="1239" WindowHeight="846" ContainerType="Page" Page="0" ViewScale="1" ViewCenterX="5.5" ViewCenterY="4.25"/>
-</Windows>'''
-
-    def _pages_xml(self):
-        page_name = _xml_escape(self.title or 'Page-1')
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve">
-  <Page ID="0" NameU="{page_name}" Name="{page_name}" ViewScale="1" ViewCenterX="5.5" ViewCenterY="4.25">
-    <PageSheet LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PageWidth" V="11"/>
-      <Cell N="PageHeight" V="8.5"/>
-      <Cell N="PageScale" V="1"/>
-      <Cell N="DrawingScale" V="1"/>
-    </PageSheet>
-    <Rel r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
-  </Page>
-</Pages>'''
-
-    def _page_xml(self, nodes, edges, positions):
-        shapes_xml = []
-        shape_id = 1
-
-        # Сначала узлы
-        for node in nodes:
-            pos = positions[node['id']]
-            xml = self._shape_to_xml(shape_id, node, pos)
-            shapes_xml.append(xml)
-            shape_id += 1
-
-        # Затем соединители
-        for edge in edges:
-            from_id = edge.get('from')
-            to_id = edge.get('to')
-            if from_id not in positions or to_id not in positions:
-                continue
-            xml = self._connector_to_xml(
-                shape_id, positions[from_id], positions[to_id]
-            )
-            shapes_xml.append(xml)
-            shape_id += 1
-
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main"
-              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-              xml:space="preserve">
-  <Shapes>
-    {''.join(shapes_xml)}
-  </Shapes>
-</PageContents>'''
-
-    def _shape_to_xml(self, sid, node, pos):
-        x, y, w, h = pos['x'], pos['y'], pos['w'], pos['h']
-        pin_x = x + w / 2
-        pin_y = y + h / 2
-        text = _xml_escape(node.get('label') or node.get('id') or '')
-        fill = _safe_color(node.get('color'), '#DAE8FC')
-        border = _safe_color(node.get('border'), '#6C8EBF')
-
-        return f'''<Shape ID="{sid}" NameU="Node{sid}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="{pin_x}"/>
-      <Cell N="PinY" V="{pin_y}"/>
-      <Cell N="Width" V="{w}"/>
-      <Cell N="Height" V="{h}"/>
-      <Cell N="LocPinX" V="{w/2}"/>
-      <Cell N="LocPinY" V="{h/2}"/>
-      <Cell N="Angle" V="0"/>
-      <Cell N="FlipX" V="0"/>
-      <Cell N="FlipY" V="0"/>
-      <Cell N="ResizeMode" V="0"/>
-      <Section N="Fill">
-        <Cell N="FillForegnd" V="{fill}"/>
-        <Cell N="FillBkgnd" V="{fill}"/>
-        <Cell N="FillPattern" V="1"/>
-      </Section>
-      <Section N="Line">
-        <Cell N="LineColor" V="{border}"/>
-        <Cell N="LineWeight" V="0.015"/>
-        <Cell N="Rounding" V="0.1"/>
-      </Section>
-      <Section N="Character">
-        <Cell N="Size" V="0.1667"/>
-        <Cell N="Color" V="#333333"/>
-      </Section>
-      <Text>{text}</Text>
-    </Shape>'''
-
-    def _connector_to_xml(self, sid, from_pos, to_pos):
-        x1 = from_pos['x'] + from_pos['w'] / 2
-        y1 = from_pos['y'] + from_pos['h'] / 2
-        x2 = to_pos['x'] + to_pos['w'] / 2
-        y2 = to_pos['y'] + to_pos['h'] / 2
-
-        def clip(px, py, qx, qy, w, h):
-            dx = qx - px
-            dy = qy - py
-            if dx == 0 and dy == 0:
-                return px, py
-            tx = (w / 2) / abs(dx) if dx != 0 else float('inf')
-            ty = (h / 2) / abs(dy) if dy != 0 else float('inf')
-            t = min(tx, ty)
-            return px + dx * t, py + dy * t
-
-        cx1, cy1 = clip(x1, y1, x2, y2, from_pos['w'], from_pos['h'])
-        cx2, cy2 = clip(x2, y2, x1, y1, to_pos['w'], to_pos['h'])
-
-        # Локальные координаты относительно PinX/PinY
-        pin_x = (cx1 + cx2) / 2
-        pin_y = (cy1 + cy2) / 2
-        w = abs(cx2 - cx1)
-        h = abs(cy2 - cy1)
-        w = max(w, 0.001)
-        h = max(h, 0.001)
-
-        # Локальные координаты начала и конца
-        lx1 = cx1 - (pin_x - w / 2)
-        ly1 = cy1 - (pin_y - h / 2)
-        lx2 = cx2 - (pin_x - w / 2)
-        ly2 = cy2 - (pin_y - h / 2)
-
-        return f'''<Shape ID="{sid}" NameU="Connector{sid}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="{pin_x}"/>
-      <Cell N="PinY" V="{pin_y}"/>
-      <Cell N="Width" V="{w}"/>
-      <Cell N="Height" V="{h}"/>
-      <Cell N="LocPinX" V="{w/2}"/>
-      <Cell N="LocPinY" V="{h/2}"/>
-      <Cell N="Angle" V="0"/>
-      <Section N="Geometry" IX="0">
-        <Row T="MoveTo" IX="1">
-          <Cell N="X" V="{lx1}"/>
-          <Cell N="Y" V="{ly1}"/>
-        </Row>
-        <Row T="LineTo" IX="2">
-          <Cell N="X" V="{lx2}"/>
-          <Cell N="Y" V="{ly2}"/>
-        </Row>
-      </Section>
-      <Section N="Line">
-        <Cell N="LineColor" V="#666666"/>
-        <Cell N="LineWeight" V="0.015"/>
-        <Cell N="EndArrow" V="4"/>
-      </Section>
-    </Shape>'''
-    def _app_props_xml(self):
-        return '''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Properties xmlns="http://schemas.openxmlformats.org/officeDocument/2006/extended-properties" xmlns:vt="http://schemas.openxmlformats.org/officeDocument/2006/docPropsVTypes">
-  <Application>Microsoft Visio</Application>
-  <AppVersion>16.0000</AppVersion>
-</Properties>'''
-
-    def _core_props_xml(self):
-        title = _xml_escape(self.title or 'Схема')
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<cp:coreProperties xmlns:cp="http://schemas.openxmlformats.org/package/2006/metadata/core-properties" xmlns:dc="http://purl.org/dc/elements/1.1/" xmlns:dcterms="http://purl.org/dc/terms/" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
-  <dc:title>{title}</dc:title>
-  <dc:creator>vsdoox</dc:creator>
-  <cp:lastModifiedBy>vsdoox</cp:lastModifiedBy>
-  <dcterms:created xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:created>
-  <dcterms:modified xsi:type="dcterms:W3CDTF">2024-01-01T00:00:00Z</dcterms:modified>
-</cp:coreProperties>'''
-
-    # ---------- Экспорт графа (новый формат) ----------
+        return self._build_package(nodes, edges, positions, PAGE_W, PAGE_H,
+                                   graph_format=False)
 
     def build_graph(self, nodes, connections):
-        """Экспорт графа (узлы с координатами/типами + связи) в .vsdx."""
-        SCALE = 100.0  # px на дюйм
+        SCALE = 100.0
         positions = {}
         for node in nodes:
             nid = node['id']
@@ -410,7 +279,6 @@ class VisioGenerator:
                 'w': w,
                 'h': h,
             }
-
         margin = 60.0
         if positions:
             min_x = min(p['x'] for p in positions.values())
@@ -420,22 +288,22 @@ class VisioGenerator:
         else:
             min_x = min_y = 0.0
             max_x = max_y = 1000.0
-
         page_w = round(max(8.5, (max_x - min_x + 2 * margin) / SCALE), 2)
         page_h = round(max(11.0, (max_y - min_y + 2 * margin) / SCALE), 2)
-
         visio_pos = {}
         for nid, p in positions.items():
             x_in = (p['x'] - min_x + margin) / SCALE
             y_top = (p['y'] - min_y + margin) / SCALE
             y_in = page_h - y_top - p['h'] / SCALE
             visio_pos[nid] = {
-                'x': round(x_in, 3),
-                'y': round(y_in, 3),
-                'w': round(p['w'] / SCALE, 3),
-                'h': round(p['h'] / SCALE, 3),
+                'x': round(x_in, 3), 'y': round(y_in, 3),
+                'w': round(p['w'] / SCALE, 3), 'h': round(p['h'] / SCALE, 3),
             }
+        return self._build_package(nodes, connections, visio_pos,
+                                   page_w, page_h, graph_format=True)
 
+    def _build_package(self, nodes, connections, positions, page_w, page_h,
+                       graph_format):
         import zipfile
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as z:
@@ -445,118 +313,243 @@ class VisioGenerator:
             z.writestr('docProps/app.xml', self._app_props_xml())
             z.writestr('visio/document.xml', self._document_xml())
             z.writestr('visio/_rels/document.xml.rels', self._document_rels())
-            z.writestr('visio/pages/pages.xml', self._pages_xml_sized(page_w, page_h))
+            z.writestr('visio/pages/pages.xml', self._pages_xml(page_w, page_h))
             z.writestr('visio/pages/_rels/pages.xml.rels', self._pages_rels())
             z.writestr('visio/pages/page1.xml',
-                       self._graph_page_xml(nodes, connections, visio_pos))
+                       self._page_xml(nodes, connections, positions,
+                                      graph_format))
             z.writestr('visio/masters/masters.xml', self._masters_xml())
-            z.writestr('visio/masters/_rels/masters.xml.rels', self._masters_rels())
+            z.writestr('visio/masters/_rels/masters.xml.rels',
+                       self._masters_rels())
             z.writestr('visio/windows.xml', self._windows_xml())
         buf.seek(0)
         return buf.read()
 
-    def _pages_xml_sized(self, page_w, page_h):
-        page_name = _xml_escape(self.title or 'Page-1')
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<Pages xmlns="http://schemas.microsoft.com/office/visio/2012/main" xml:space="preserve">
-  <Page ID="0" NameU="{page_name}" Name="{page_name}" ViewScale="1" ViewCenterX="{page_w / 2}" ViewCenterY="{page_h / 2}">
-    <PageSheet LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PageWidth" V="{page_w}"/>
-      <Cell N="PageHeight" V="{page_h}"/>
-      <Cell N="PageScale" V="1"/>
-      <Cell N="DrawingScale" V="1"/>
-    </PageSheet>
-    <Rel r:id="rId1" xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"/>
-  </Page>
-</Pages>'''
+    def _content_types(self):
+        root = etree.Element('Types', xmlns=CT_NS)
+        for ext, ct in [
+            ('rels', 'application/vnd.openxmlformats-package.relationships+xml'),
+            ('xml', 'application/xml'),
+        ]:
+            etree.SubElement(root, 'Default', Extension=ext, ContentType=ct)
+        for part, ct in [
+            ('/visio/document.xml', 'application/vnd.ms-visio.drawing.main+xml'),
+            ('/visio/pages/pages.xml', 'application/vnd.ms-visio.pages+xml'),
+            ('/visio/pages/page1.xml', 'application/vnd.ms-visio.page+xml'),
+            ('/visio/masters/masters.xml', 'application/vnd.ms-visio.masters+xml'),
+            ('/visio/windows.xml', 'application/vnd.ms-visio.windows+xml'),
+            ('/docProps/core.xml', 'application/vnd.openxmlformats-package.core-properties+xml'),
+            ('/docProps/app.xml', 'application/vnd.openxmlformats-officedocument.extended-properties+xml'),
+        ]:
+            etree.SubElement(root, 'Override', PartName=part, ContentType=ct)
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
 
-    def _graph_page_xml(self, nodes, connections, positions):
-        shapes_xml = []
+    def _root_rels(self):
+        root = etree.Element('Relationships',
+                             xmlns='http://schemas.openxmlformats.org/package/2006/relationships')
+        rels = [
+            ('rId1', 'http://schemas.microsoft.com/visio/2010/relationships/document',
+             'visio/document.xml'),
+            ('rId2', 'http://schemas.openxmlformats.org/package/2006/relationships/metadata/core-properties',
+             'docProps/core.xml'),
+            ('rId3', 'http://schemas.openxmlformats.org/officeDocument/2006/relationships/extended-properties',
+             'docProps/app.xml'),
+        ]
+        for rid, reltype, target in rels:
+            etree.SubElement(root, 'Relationship', Id=rid, Type=reltype,
+                             Target=target)
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _document_rels(self):
+        root = etree.Element('Relationships',
+                             xmlns='http://schemas.openxmlformats.org/package/2006/relationships')
+        rels = [
+            ('rId1', 'http://schemas.microsoft.com/visio/2010/relationships/pages',
+             'pages/pages.xml'),
+            ('rId2', 'http://schemas.microsoft.com/visio/2010/relationships/windows',
+             'windows.xml'),
+            ('rId3', 'http://schemas.microsoft.com/visio/2010/relationships/masters',
+             'masters/masters.xml'),
+        ]
+        for rid, reltype, target in rels:
+            etree.SubElement(root, 'Relationship', Id=rid, Type=reltype,
+                             Target=target)
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _document_xml(self):
+        root = etree.Element('VisioDocument', xmlns=VISIO_NS,
+                             **{'{%s}space' % XML_NS: 'preserve'})
+        etree.SubElement(root, 'DocumentSettings', TopPage='0',
+                         DefaultTextStyle='0', DefaultLineStyle='0',
+                         DefaultFillStyle='0')
+        etree.SubElement(root, 'Colors')
+        etree.SubElement(root, 'FaceNames')
+        etree.SubElement(root, 'StyleSheets')
+        sheet = etree.SubElement(root, 'DocumentSheet', NameU='TheDoc',
+                                 LineStyle='0', FillStyle='0', TextStyle='0')
+        etree.SubElement(sheet, 'Shapes')
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _masters_xml(self):
+        root = etree.Element('Masters', xmlns=VISIO_NS,
+                             **{'{%s}space' % XML_NS: 'preserve'})
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _masters_rels(self):
+        root = etree.Element('Relationships',
+                             xmlns='http://schemas.openxmlformats.org/package/2006/relationships')
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _windows_xml(self):
+        root = etree.Element('Windows', xmlns=VISIO_NS,
+                             **{'{%s}space' % XML_NS: 'preserve'})
+        etree.SubElement(root, 'Window', ID='0', WindowType='Drawing',
+                         WindowState='1073741824', WindowLeftX='0',
+                         WindowTopY='0', WindowWidth='1239', WindowHeight='846',
+                         ContainerType='Page', Page='0', ViewScale='1',
+                         ViewCenterX='5.5', ViewCenterY='4.25')
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _app_props_xml(self):
+        root = etree.Element('{%s}Properties' % EXT_PROPS_NS,
+                             nsmap={'vt': VT_NS})
+        app = etree.SubElement(root, '{%s}Application' % EXT_PROPS_NS)
+        app.text = 'Microsoft Visio'
+        ver = etree.SubElement(root, '{%s}AppVersion' % EXT_PROPS_NS)
+        ver.text = '16.0000'
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _core_props_xml(self):
+        title = _xml_escape(self.title or 'Схема')
+        root = etree.Element('{%s}coreProperties' % CORE_PROPS_NS,
+                             nsmap={'cp': CORE_PROPS_NS, 'dc': DC_NS,
+                                    'dcterms': DCTERMS_NS, 'xsi': XSI_NS})
+        dc_title = etree.SubElement(root, '{%s}title' % DC_NS)
+        dc_title.text = title
+        etree.SubElement(root, '{%s}creator' % DC_NS).text = 'vsdoox'
+        lm = etree.SubElement(root, '{%s}lastModifiedBy' % CORE_PROPS_NS)
+        lm.text = 'vsdoox'
+        created = etree.SubElement(root, '{%s}created' % DCTERMS_NS,
+                                   **{'{%s}type' % XSI_NS: 'dcterms:W3CDTF'})
+        created.text = '2024-01-01T00:00:00Z'
+        modified = etree.SubElement(root, '{%s}modified' % DCTERMS_NS,
+                                    **{'{%s}type' % XSI_NS: 'dcterms:W3CDTF'})
+        modified.text = '2024-01-01T00:00:00Z'
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _pages_xml(self, page_w, page_h):
+        page_name = _xml_escape(self.title or 'Page-1')
+        root = etree.Element('Pages', xmlns=VISIO_NS,
+                             **{'{%s}space' % XML_NS: 'preserve'})
+        page = etree.SubElement(root, 'Page', ID='0', NameU=page_name,
+                                Name=page_name, ViewScale='1',
+                                ViewCenterX=str(page_w / 2),
+                                ViewCenterY=str(page_h / 2))
+        sheet = etree.SubElement(page, 'PageSheet', LineStyle='0',
+                                 FillStyle='0', TextStyle='0')
+        etree.SubElement(sheet, 'Cell', N='PageWidth', V=str(page_w))
+        etree.SubElement(sheet, 'Cell', N='PageHeight', V=str(page_h))
+        etree.SubElement(sheet, 'Cell', N='PageScale', V='1')
+        etree.SubElement(sheet, 'Cell', N='DrawingScale', V='1')
+        etree.SubElement(page, 'Rel', **{f'{{{REL_NS}}}id': 'rId1'})
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _page_xml(self, nodes, connections, positions, graph_format):
+        shapes = []
         shape_id = 1
+        node_to_sheet = {}  # логический id узла -> ссылка ThePage!Sheet.<ID формы>
+
         for node in nodes:
             nid = node['id']
             if nid not in positions:
                 continue
-            shapes_xml.append(self._graph_shape_xml(shape_id, node, positions[nid]))
+            node_to_sheet[nid] = f'Sheet.{shape_id}'
+            shape = self._node_shape(shape_id, node, positions[nid],
+                                     graph_format=graph_format)
+            shapes.append(shape)
             shape_id += 1
+
         for conn in connections:
-            s = conn.get('source_id')
-            t = conn.get('target_id')
+            if graph_format:
+                s = conn.get('source_id')
+                t = conn.get('target_id')
+                label = conn.get('protocol') or 'any'
+                if conn.get('port'):
+                    label += chr(92) + str(conn.get('port'))
+                color = conn.get('color')
+            else:
+                s = conn.get('from')
+                t = conn.get('to')
+                label = conn.get('label', '')
+                color = conn.get('color', '#666666')
+
             if s not in positions or t not in positions:
                 continue
-            label = conn.get('protocol') or 'any'
-            if conn.get('port'):
-                label += '\\' + str(conn.get('port'))
-            shapes_xml.append(self._graph_connector_xml(
-                shape_id, positions[s], positions[t], label, conn.get('color')))
+            shape = self._connector_shape(shape_id, positions[s], positions[t],
+                                          label, color,
+                                          node_to_sheet[s], node_to_sheet[t],
+                                          graph_format=graph_format)
+            shapes.append(shape)
             shape_id += 1
-        return f'''<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
-<PageContents xmlns="http://schemas.microsoft.com/office/visio/2012/main"
-              xmlns:r="http://schemas.openxmlformats.org/officeDocument/2006/relationships"
-              xml:space="preserve">
-  <Shapes>
-    {''.join(shapes_xml)}
-  </Shapes>
-</PageContents>'''
 
-    def _graph_shape_xml(self, sid, node, pos):
+        root = etree.Element('PageContents', xmlns=VISIO_NS,
+                             **{'{%s}space' % XML_NS: 'preserve'})
+        shapes_el = etree.SubElement(root, 'Shapes')
+        for sh in shapes:
+            shapes_el.append(sh)
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)
+
+    def _node_shape(self, sid, node, pos, graph_format=False):
         x, y, w, h = pos['x'], pos['y'], pos['w'], pos['h']
         pin_x = x + w / 2
         pin_y = y + h / 2
-        t = node.get('type', 'server')
-        style = TYPE_STYLE.get(t, TYPE_STYLE['server'])
-        fill = style['fill']
-        border = style['border']
-        text = _xml_escape(_node_label(node))
-        return f'''<Shape ID="{sid}" NameU="Node{sid}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="{pin_x}"/>
-      <Cell N="PinY" V="{pin_y}"/>
-      <Cell N="Width" V="{w}"/>
-      <Cell N="Height" V="{h}"/>
-      <Cell N="LocPinX" V="{w/2}"/>
-      <Cell N="LocPinY" V="{h/2}"/>
-      <Cell N="Angle" V="0"/>
-      <Cell N="FlipX" V="0"/>
-      <Cell N="FlipY" V="0"/>
-      <Cell N="ResizeMode" V="0"/>
-      <Section N="Fill">
-        <Cell N="FillForegnd" V="{fill}"/>
-        <Cell N="FillBkgnd" V="{fill}"/>
-        <Cell N="FillPattern" V="1"/>
-      </Section>
-      <Section N="Line">
-        <Cell N="LineColor" V="{border}"/>
-        <Cell N="LineWeight" V="0.015"/>
-        <Cell N="Rounding" V="0.1"/>
-      </Section>
-      <Section N="Character">
-        <Cell N="Size" V="0.1667"/>
-        <Cell N="Color" V="#333333"/>
-      </Section>
-      <Text>{text}</Text>
-    </Shape>'''
 
-    def _graph_connector_xml(self, sid, from_pos, to_pos, label, color):
-        x1 = from_pos['x'] + from_pos['w'] / 2
-        y1 = from_pos['y'] + from_pos['h'] / 2
-        x2 = to_pos['x'] + to_pos['w'] / 2
-        y2 = to_pos['y'] + to_pos['h'] / 2
+        if graph_format:
+            t = node.get('type', 'server')
+            style = TYPE_STYLE.get(t, TYPE_STYLE['server'])
+            fill = style['fill']
+            border = style['border']
+            text = _xml_escape(_node_label(node))
+        else:
+            fill = _safe_color(node.get('color'), '#DAE8FC')
+            border = _safe_color(node.get('border'), '#6C8EBF')
+            text = _xml_escape(node.get('label') or node.get('id') or '')
 
-        def clip(px, py, qx, qy, w, h):
-            dx = qx - px
-            dy = qy - py
-            if dx == 0 and dy == 0:
-                return px, py
-            tx = (w / 2) / abs(dx) if dx != 0 else float('inf')
-            ty = (h / 2) / abs(dy) if dy != 0 else float('inf')
-            t = min(tx, ty)
-            return px + dx * t, py + dy * t
+        # Connection point at bottom center (X1, Y1) for connector glue.
+        # Локальная СК Visio: начало в левом нижнем углу, ось Y вверх;
+        # pin = центр формы, LocPin = (w/2, h/2), поэтому нижний центр = (w/2, 0).
+        cp = [(round(w / 2, 3), 0.0, 0)]
 
-        sx, sy = clip(x1, y1, x2, y2, from_pos['w'], from_pos['h'])
-        tx_, ty_ = clip(x2, y2, x1, y1, to_pos['w'], to_pos['h'])
+        return _shape(sid, f'Node{sid}', pin_x, pin_y, w, h,
+                      text=text, fill=fill, border=border,
+                      connection_points=cp)
 
-        # Ортогональный маршрут (Г-образный): горизонталь затем вертикаль.
-        pts = [(sx, sy), (tx_, sy), (tx_, ty_)]
+    def _connector_shape(self, sid, from_pos, to_pos, label, color,
+                         source_sheet, target_sheet, graph_format=False):
+        src_cx = from_pos['x'] + from_pos['w'] / 2
+        src_bottom_y = from_pos['y']
+        tgt_cx = to_pos['x'] + to_pos['w'] / 2
+        tgt_bottom_y = to_pos['y']
+
+        stub_y = min(src_bottom_y, tgt_bottom_y) - STUB_INCHES
+
+        pts = [
+            (src_cx, src_bottom_y),
+            (src_cx, stub_y),
+            (tgt_cx, stub_y),
+            (tgt_cx, tgt_bottom_y),
+        ]
 
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
@@ -565,36 +558,38 @@ class VisioGenerator:
         w = max(max(xs) - min(xs), 0.001)
         h = max(max(ys) - min(ys), 0.001)
 
-        lx = [round(p[0] - (pin_x - w / 2), 3) for p in pts]
-        ly = [round(p[1] - (pin_y - h / 2), 3) for p in pts]
+        local_pts = [
+            (round(px - (pin_x - w / 2), 3), round(py - (pin_y - h / 2), 3))
+            for px, py in pts
+        ]
 
-        rows = ''.join(
-            f'<Row T="{"MoveTo" if i == 0 else "LineTo"}" IX="{i + 1}">'
-            f'<Cell N="X" V="{lx[i]}"/><Cell N="Y" V="{ly[i]}"/></Row>'
-            for i in range(len(pts))
-        )
+        geometry_rows = _connector_geometry_rows(local_pts)
 
         line_color = _safe_color(color, '#666666')
-        text_xml = f'      <Text>{_xml_escape(label)}</Text>\n' if label else ''
 
-        return f'''<Shape ID="{sid}" NameU="Connector{sid}" Type="Shape" LineStyle="0" FillStyle="0" TextStyle="0">
-      <Cell N="PinX" V="{pin_x}"/>
-      <Cell N="PinY" V="{pin_y}"/>
-      <Cell N="Width" V="{w}"/>
-      <Cell N="Height" V="{h}"/>
-      <Cell N="LocPinX" V="{w/2}"/>
-      <Cell N="LocPinY" V="{h/2}"/>
-      <Cell N="Angle" V="0"/>
-      <Section N="Geometry" IX="0">
-        {rows}
-      </Section>
-      <Section N="Line">
-        <Cell N="LineColor" V="{line_color}"/>
-        <Cell N="LineWeight" V="0.015"/>
-        <Cell N="EndArrow" V="4"/>
-      </Section>
-      <Section N="Character">
-        <Cell N="Size" V="0.125"/>
-        <Cell N="Color" V="{line_color}"/>
-      </Section>
-{text_xml}    </Shape>'''
+        # source_sheet/target_sheet уже имеют вид 'Sheet.<N>', где N — ID фигуры узла на странице.
+        # Ссылка на ячейку Connection Points другой фигуры — классический способ приклеить конец
+        # коннектора к точке подключения (Visio сама приводит системы координат фигур).
+        # SHAPETOSTR убран: он делал значение статичным и не поправлял на пин фигуры-коннектора.
+        extra_cells = [
+            _cell('BeginX', f'ThePage!{source_sheet}!Connections.X1'),
+            _cell('BeginY', f'ThePage!{source_sheet}!Connections.Y1'),
+            _cell('EndX', f'ThePage!{target_sheet}!Connections.X1'),
+            _cell('EndY', f'ThePage!{target_sheet}!Connections.Y1'),
+        ]
+
+        return _shape(sid, f'Connector{sid}', pin_x, pin_y, w, h,
+                      text=label if label else '',
+                      line_color=line_color, end_arrow=4,
+                      geometry_rows=geometry_rows,
+                      extra_cells=extra_cells,
+                      char_size='0.125', char_color=line_color)
+
+    def _pages_rels(self):
+        root = etree.Element('Relationships',
+                             xmlns='http://schemas.openxmlformats.org/package/2006/relationships')
+        etree.SubElement(root, 'Relationship', Id='rId1',
+                         Type='http://schemas.microsoft.com/visio/2010/relationships/page',
+                         Target='page1.xml')
+        return etree.tostring(root, xml_declaration=True, encoding='UTF-8',
+                              standalone=True)

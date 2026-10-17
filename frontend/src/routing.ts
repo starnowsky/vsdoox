@@ -21,39 +21,65 @@ export interface RouteItem {
 
 export const HANDLE_GAP = 12; // gap between connection points on same node side
 
-// Find nearest point on rectangle boundary to a target point
+// Константы расстояния для адаптивной толщины линий (в пикселях)
+export const MIN_CONN_DIST = 30;
+export const MID_CONN_DIST = 120;
+export const MAX_CONN_DIST = 300;
+
+// Константа толщины линии (в пикселях) - используется для зазора между параллельными линиями и радиуса мостиков
+export const LINE_WIDTH = 2;
+
+// Find nearest point on rectangle boundary to a target point.
+// Returns the point on the closest side (top/right/bottom/left) — the clamped
+// projection of the target onto that side — so lines terminate at the nearest
+// boundary port instead of the node centre or a corner.
 export function nearestBoundaryPoint(
   node: { position: { x: number; y: number }; width?: number; height?: number },
   target: { x: number; y: number },
 ): { x: number; y: number; side: 'top' | 'right' | 'bottom' | 'left' } {
   const nx = node.position.x;
   const ny = node.position.y;
-  const w = node.width ?? 150;
   const h = node.height ?? 60;
+  const w = node.width ?? 150;
   const cx = nx + w / 2;
   const cy = ny + h / 2;
+
+  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
   const dx = target.x - cx;
   const dy = target.y - cy;
   const absDx = Math.abs(dx);
   const absDy = Math.abs(dy);
 
-  const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
-
-  // Determine which side is closest, then return the nearest point ON that side
-  // (clamped projection of the target onto the side) to minimise line length.
+  // Closer to the left/right side when the horizontal offset dominates.
   if (absDx * h > absDy * w) {
-    // Closer to left/right side
     if (dx > 0) {
       return { x: nx + w, y: clamp(target.y, ny, ny + h), side: 'right' };
     }
     return { x: nx, y: clamp(target.y, ny, ny + h), side: 'left' };
+  }
+  // Closer to the top/bottom side.
+  if (dy > 0) {
+    return { x: clamp(target.x, nx, nx + w), y: ny + h, side: 'bottom' };
+  }
+  return { x: clamp(target.x, nx, nx + w), y: ny, side: 'top' };
+}
+
+// Вычисляет толщину линии соединения на основе расстояния между объектами.
+// Возвращает толщину в пикселях.
+export function getLineWidthForConnection(source: Pt, target: Pt): number {
+  const dx = target.x - source.x;
+  const dy = target.y - source.y;
+  const distance = Math.sqrt(dx * dx + dy * dy);
+
+  if (distance <= MIN_CONN_DIST) {
+    return 1; // Толщина 1px при близком расположении узлов
+  } else if (distance >= MAX_CONN_DIST) {
+    return 2; // Толщина 2px при удалении
   } else {
-    // Closer to top/bottom side
-    if (dy > 0) {
-      return { x: clamp(target.x, nx, nx + w), y: ny + h, side: 'bottom' };
-    }
-    return { x: clamp(target.x, nx, nx + w), y: ny, side: 'top' };
+    // Интерполяция между 1 и 2px в зависимости от расстояния
+    const normalizedDist = (distance - MIN_CONN_DIST) / (MAX_CONN_DIST - MIN_CONN_DIST);
+    return 1 + normalizedDist; // Возвращает значение между 1 и 2
   }
 }
 
@@ -95,10 +121,13 @@ function getDistributedPoint(
   }
 }
 
-const GAP = 14; // отступ = 7 толщин линии (толщина 2px)
-const R = 6; // радиус «мостика» на пересечении
+const GAP = LINE_WIDTH * 5; // отступ = 5 толщин линии (адаптивный)
+const R = LINE_WIDTH * 2; // радиус «мостика» на пересечении
 
 function orthoPath(source: Pt, waypoints: Pt[], target: Pt): Pt[] {
+  // Прямая ортогональная полилиния: источник → промежуточные точки → цель.
+  // Соединение идёт строго до точек на границах узлов (source/target уже
+  // вычислены через nearestBoundaryPoint), без принудительного отступа вниз.
   const pts: Pt[] = [source, ...waypoints, target];
   const path: Pt[] = [{ x: pts[0].x, y: pts[0].y }];
   for (let i = 1; i < pts.length; i++) {
@@ -314,28 +343,9 @@ export function routeConnections(
 
   const paths = distributedItems.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
 
-  // Смещение одинаковых маршрутов (одинаковая пара узлов).
-  const offsets: number[] = new Array(distributedItems.length).fill(0);
-  const groups = new Map<string, number[]>();
-  distributedItems.forEach((it, i) => {
-    // Skip connections that pass through firewalls — they are already distributed by lanes
-    if (it.fwIds.length > 0) return;
-    const sig = signature(it);
-    if (!groups.has(sig)) groups.set(sig, []);
-    groups.get(sig)!.push(i);
-  });
-  for (const idxs of groups.values()) {
-    const n = idxs.length;
-    idxs.forEach((idx, j) => {
-      offsets[idx] = (j - (n - 1) / 2) * GAP;
-    });
-  }
-
-  const shifted = paths.map((p, i) => shiftPath(p, offsets[i]));
-
   // Сегменты всех линий — для поиска пересечений.
   const segs: Seg[] = [];
-  shifted.forEach((path, edgeIndex) => {
+  paths.forEach((path, edgeIndex) => {
     for (let segIndex = 0; segIndex < path.length - 1; segIndex++) {
       segs.push({ edgeIndex, segIndex, a: path[segIndex], b: path[segIndex + 1] });
     }
@@ -355,7 +365,7 @@ export function routeConnections(
     }
   }
 
-  return shifted.map((path, i) => ({
+  return paths.map((path, i) => ({
     id: distributedItems[i].id,
     d: buildPath(path, bridges[i]),
     labelPos: midpointAlongPath(path),
@@ -374,5 +384,9 @@ export const ROUTING_SYMBOLS = {
   buildPath,
   midpointAlongPath,
   signature,
+  getLineWidthForConnection,
+  LINE_WIDTH,
+  MIN_CONN_DIST,
+  MAX_CONN_DIST,
 } as const;
 

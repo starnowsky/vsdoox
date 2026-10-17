@@ -5,7 +5,12 @@ import { toSvg } from 'html-to-image';
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
 import type { DeviceData } from './nodes';
 import { OrthoEdge } from './edges';
-import { routeConnections, nearestBoundaryPoint, ROUTING_SYMBOLS } from './routing';
+import {
+  routeConnections,
+  nearestBoundaryPoint,
+  getLineWidthForConnection,
+  ROUTING_SYMBOLS,
+} from './routing';
 // eslint-disable-next-line no-unused-vars
 void ROUTING_SYMBOLS;
 import {
@@ -528,12 +533,18 @@ export default function App() {
         targetHandle: 't-' + item.targetSide,
         type: 'ortho',
         label,
+        markerEnd: { type: 'arrowclosed', width: 18, height: 18, color },
         data: {
           d: routedById.get(c.id)?.d ?? '',
           labelX: routedById.get(c.id)?.labelPos.x ?? 0,
           labelY: routedById.get(c.id)?.labelPos.y ?? 0,
         },
-        style: { stroke: color, strokeWidth: highlighted ? 3 : 2 },
+        style: {
+          stroke: color,
+          strokeWidth: highlighted
+            ? 3
+            : getLineWidthForConnection(item.source, item.target),
+        },
         labelStyle: { fill: 'var(--text)', fontSize: 11, fontWeight: 600 },
         labelBgStyle: { fill: 'var(--surface)', fillOpacity: 0.92 },
         labelBgPadding: [5, 3] as [number, number],
