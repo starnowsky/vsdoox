@@ -147,16 +147,24 @@ const GAP = LINE_WIDTH * 5; // отступ = 5 толщин линии (ада�
 const R = LINE_WIDTH * 2; // радиус «мостика» на пересечении
 
 function orthoPath(source: Pt, waypoints: Pt[], target: Pt): Pt[] {
-  // Прямая ортогональная полилиния: источник → промежуточные точки → цель.
-  // Соединение идёт строго до точек на границах узлов (source/target уже
-  // вычислены через nearestBoundaryPoint), без принудительного отступа вниз.
+  // Линия выходит из источника и заканчивается «по горизонтали» — входим в цель
+  // перпендикулярно боковой стороне (последний сегмент горизонтальный), выходя
+  // из источника тоже горизонтально. Между соседними точками — Z-образный переход
+  // через середину по X, без вертикального «скольжения» вдоль границе узла.
   const pts: Pt[] = [source, ...waypoints, target];
   const path: Pt[] = [{ x: pts[0].x, y: pts[0].y }];
   for (let i = 1; i < pts.length; i++) {
-    const prev = path[path.length - 1];
-    const cur = pts[i];
-    if (cur.x !== prev.x) path.push({ x: cur.x, y: prev.y });
-    if (cur.y !== prev.y) path.push({ x: cur.x, y: cur.y });
+    const a = path[path.length - 1];
+    const b = pts[i];
+    if (a.x === b.x) {
+      // Точки на одной вертикали — чистый вертикальный сегмент.
+      if (a.y !== b.y) path.push({ x: b.x, y: b.y });
+    } else {
+      const midX = (a.x + b.x) / 2;
+      path.push({ x: midX, y: a.y });
+      if (a.y !== b.y) path.push({ x: midX, y: b.y });
+      path.push({ x: b.x, y: b.y });
+    }
   }
   return path;
 }
