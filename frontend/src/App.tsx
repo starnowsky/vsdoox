@@ -505,6 +505,7 @@ export default function App() {
         target: targetNearest,
         sourceSide,
         targetSide,
+        horizontalPass,
       };
     });
 
@@ -533,7 +534,13 @@ export default function App() {
         targetHandle: 't-' + item.targetSide,
         type: 'ortho',
         label,
-        markerEnd: { type: 'arrowclosed', width: 18, height: 18, color },
+        markerEnd: {
+          type: 'arrowclosed',
+          width: 18,
+          height: 18,
+          color,
+          markerUnits: 'userSpaceOnUse',
+        },
         data: {
           d: routedById.get(c.id)?.d ?? '',
           labelX: routedById.get(c.id)?.labelPos.x ?? 0,

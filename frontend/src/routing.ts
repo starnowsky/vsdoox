@@ -17,9 +17,11 @@ export interface RouteItem {
   target: Pt;
   sourceSide: string;
   targetSide: string;
+  horizontalPass: boolean;
 }
 
 export const HANDLE_GAP = 12; // gap between connection points on same node side
+export const NODE_EDGE_INSET = 8; // отступ линии внутрь узла от границы, чтобы не ложиться на скруглённые углы
 
 // Константы расстояния для адаптивной толщины линий (в пикселях)
 export const MIN_CONN_DIST = 30;
@@ -49,10 +51,20 @@ export function nearestBoundaryPoint(
 
   // Соединяемся только с боковыми сторонами (левой/правой), независимо от
   // вертикального смещения цели. Верх/низ больше не используются.
+  // Точка подключения сдвинута внутрь на NODE_EDGE_INSET, чтобы линия не «висела»
+  // на скруглённом углу фигуры, а начиналась чуть ближе к центру узла.
   if (dx > 0) {
-    return { x: nx + w, y: clamp(target.y, ny, ny + h), side: 'right' };
+    return {
+      x: nx + w - NODE_EDGE_INSET,
+      y: clamp(target.y, ny + NODE_EDGE_INSET, ny + h - NODE_EDGE_INSET),
+      side: 'right',
+    };
   }
-  return { x: nx, y: clamp(target.y, ny, ny + h), side: 'left' };
+  return {
+    x: nx + NODE_EDGE_INSET,
+    y: clamp(target.y, ny + NODE_EDGE_INSET, ny + h - NODE_EDGE_INSET),
+    side: 'left',
+  };
 }
 
 // Вычисляет толщину линии соединения на основе расстояния между объектами.
@@ -86,29 +98,46 @@ function getDistributedPoint(
   const w = node.width ?? 150;
   const h = node.height ?? 60;
 
-  let baseX = nx + w / 2;
-  let baseY = ny + h / 2;
+  // Fixed coordinate on the chosen side (x for left/right, y for top/bottom),
+  // pulled inside NODE_EDGE_INSET so lines leave the flat edge, not the corner.
+  let fixedX = nx + w / 2;
+  let fixedY = ny + h / 2;
+  let lo: number;
+  let hi: number;
+  if (side === 'left') {
+    fixedX = nx + NODE_EDGE_INSET;
+    lo = ny + NODE_EDGE_INSET;
+    hi = ny + h - NODE_EDGE_INSET;
+    fixedY = (lo + hi) / 2;
+  } else if (side === 'right') {
+    fixedX = nx + w - NODE_EDGE_INSET;
+    lo = ny + NODE_EDGE_INSET;
+    hi = ny + h - NODE_EDGE_INSET;
+    fixedY = (lo + hi) / 2;
+  } else if (side === 'top') {
+    fixedY = ny + NODE_EDGE_INSET;
+    lo = nx + NODE_EDGE_INSET;
+    hi = nx + w - NODE_EDGE_INSET;
+    fixedX = (lo + hi) / 2;
+  } else {
+    // bottom
+    fixedY = ny + h - NODE_EDGE_INSET;
+    lo = nx + NODE_EDGE_INSET;
+    hi = nx + w - NODE_EDGE_INSET;
+    fixedX = (lo + hi) / 2;
+  }
+  if (hi < lo) hi = lo;
 
-  if (side === 'left') { baseX = nx; baseY = ny + h / 2; }
-  else if (side === 'right') { baseX = nx + w; baseY = ny + h / 2; }
-  else if (side === 'top') { baseX = nx + w / 2; baseY = ny; }
-  else if (side === 'bottom') { baseX = nx + w / 2; baseY = ny + h; }
+  if (count <= 1) return base ?? { x: fixedX, y: fixedY };
 
-  // Use the nearest boundary point as the base when provided (minimises length)
-  if (base) { baseX = base.x; baseY = base.y; }
-
-  if (count <= 1) return { x: baseX, y: baseY };
-
-  const totalWidth = (count - 1) * HANDLE_GAP;
-  const startOffset = -totalWidth / 2;
+  // Equal spacing across the whole side: index 0 at `lo`, last index at `hi`.
+  const t = index / (count - 1);
+  const v = lo + (hi - lo) * t;
 
   if (side === 'left' || side === 'right') {
-    const y = baseY + startOffset + index * HANDLE_GAP;
-    return { x: baseX, y: Math.max(ny, Math.min(ny + h, y)) };
-  } else {
-    const x = baseX + startOffset + index * HANDLE_GAP;
-    return { x: Math.max(nx, Math.min(nx + w, x)), y: baseY };
+    return { x: fixedX, y: Math.max(lo, Math.min(hi, v)) };
   }
+  return { x: Math.max(lo, Math.min(hi, v)), y: fixedY };
 }
 
 const GAP = LINE_WIDTH * 5; // отступ = 5 толщин линии (адаптивный)
@@ -240,70 +269,82 @@ export function routeConnections(
   items: RouteItem[],
   nodes: Map<string, { position: { x: number; y: number }; width?: number; height?: number }>
 ): Array<{ id: string; d: string; labelPos: Pt }> {
-  // --- 1. Group by source node and target node for tangential distribution ---
+  // --- 1. Determine the boundary side for every endpoint (nearest point) ---
+  // This must happen before grouping, because distribution is per (node, side):
+  // lines leaving the same node on different sides must not share an index.
+  type Side = 'top' | 'right' | 'bottom' | 'left';
+  const endpointSides: { sourceSide: Side; targetSide: Side }[] = items.map((it) => {
+    const sourceNode = nodes.get(it.sourceId);
+    const targetNode = nodes.get(it.targetId);
+    const sourceSide = sourceNode
+      ? nearestBoundaryPoint(sourceNode, it.target).side
+      : (it.sourceSide as Side);
+    const targetSide = targetNode
+      ? nearestBoundaryPoint(targetNode, it.source).side
+      : (it.targetSide as Side);
+    return { sourceSide, targetSide };
+  });
+
+  // --- 2. Group by (node, side) so left/right lines of one node distribute independently ---
   const sourceGroups = new Map<string, number[]>();
   const targetGroups = new Map<string, number[]>();
 
   items.forEach((it, i) => {
-    if (!sourceGroups.has(it.sourceId)) sourceGroups.set(it.sourceId, []);
-    if (!targetGroups.has(it.targetId)) targetGroups.set(it.targetId, []);
-    sourceGroups.get(it.sourceId)!.push(i);
-    targetGroups.get(it.targetId)!.push(i);
+    const sKey = `${it.sourceId}:${endpointSides[i].sourceSide}`;
+    const tKey = `${it.targetId}:${endpointSides[i].targetSide}`;
+    if (!sourceGroups.has(sKey)) sourceGroups.set(sKey, []);
+    if (!targetGroups.has(tKey)) targetGroups.set(tKey, []);
+    sourceGroups.get(sKey)!.push(i);
+    targetGroups.get(tKey)!.push(i);
   });
 
   // Sort each group by target/source position for deterministic ordering
   for (const [, group] of sourceGroups) {
-    group.sort((a, b) => {
-      const na = items[a].target;
-      const nb = items[b].target;
-      return na.y - nb.y;
-    });
+    group.sort((a, b) => items[a].target.y - items[b].target.y);
   }
   for (const [, group] of targetGroups) {
-    group.sort((a, b) => {
-      const na = items[a].source;
-      const nb = items[b].source;
-      return na.y - nb.y;
-    });
+    group.sort((a, b) => items[a].source.y - items[b].source.y);
   }
 
   // Apply tangential distribution to source/target points
   const distributedItems = items.map((it, i) => {
     const sourceNode = nodes.get(it.sourceId);
     const targetNode = nodes.get(it.targetId);
+    const { sourceSide, targetSide } = endpointSides[i];
 
     let newSource = it.source;
     let newTarget = it.target;
-    let newSourceSide = it.sourceSide;
-    let newTargetSide = it.targetSide;
+    let newSourceSide = it.sourceSide as Side;
+    let newTargetSide = it.targetSide as Side;
 
     if (sourceNode) {
-      const sourceGroup = sourceGroups.get(it.sourceId) ?? [];
+      const sourceGroup = sourceGroups.get(`${it.sourceId}:${sourceSide}`) ?? [];
       const sourceIndex = sourceGroup.indexOf(i);
       if (sourceIndex >= 0) {
-        const nearest = nearestBoundaryPoint(sourceNode, { x: it.target.x, y: it.target.y });
-        const distributed = getDistributedPoint(sourceNode, nearest.side, sourceGroup.length, sourceIndex, nearest);
+        const nearest = nearestBoundaryPoint(sourceNode, it.target);
+        const distributed = getDistributedPoint(sourceNode, sourceSide, sourceGroup.length, sourceIndex, nearest);
         newSource = { x: distributed.x, y: distributed.y };
-        newSourceSide = nearest.side;
+        newSourceSide = sourceSide;
       }
     }
 
     if (targetNode) {
-      const targetGroup = targetGroups.get(it.targetId) ?? [];
+      const targetGroup = targetGroups.get(`${it.targetId}:${targetSide}`) ?? [];
       const targetIndex = targetGroup.indexOf(i);
       if (targetIndex >= 0) {
-        const nearest = nearestBoundaryPoint(targetNode, { x: it.source.x, y: it.source.y });
-        const distributed = getDistributedPoint(targetNode, nearest.side, targetGroup.length, targetIndex, nearest);
+        const nearest = nearestBoundaryPoint(targetNode, it.source);
+        const distributed = getDistributedPoint(targetNode, targetSide, targetGroup.length, targetIndex, nearest);
         newTarget = { x: distributed.x, y: distributed.y };
-        newTargetSide = nearest.side;
+        newTargetSide = targetSide;
       }
     }
 
     return { ...it, source: newSource, target: newTarget, sourceSide: newSourceSide, targetSide: newTargetSide };
   });
 
-  // Направление прохода (горизонтальное/вертикальное) для каждой линии.
-  const passH = distributedItems.map((it) => Math.abs(it.target.x - it.source.x) >= Math.abs(it.target.y - it.source.y));
+  // Направление прохода берётся из RouteItem (рассчитано в App.tsx из центров узлов),
+  // чтобы не расходиться с осью, по которой уже построены waypoints.
+  const passH = distributedItems.map((it) => it.horizontalPass);
 
   // Лейны: линии, проходящие через один и тот же МСЭ, разводим, чтобы не ложились друг на друга.
   const fwGroups = new Map<string, number[]>();
