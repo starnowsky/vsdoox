@@ -130,14 +130,18 @@ function getDistributedPoint(
 
   if (count <= 1) return base ?? { x: fixedX, y: fixedY };
 
-  // Equal spacing across the whole side: index 0 at `lo`, last index at `hi`.
-  const t = index / (count - 1);
-  const v = lo + (hi - lo) * t;
+  // Симметричное распределение вокруг центра стороны:
+  // первая линия в центре, каждая следующая смещается на HANDLE_GAP
+  // вверх/вниз (для left/right) или влево/вправо (для top/bottom),
+  // результат прижимается к границам стороны [lo, hi], чтобы не выйти за узел.
+  const center = (lo + hi) / 2;
+  const offset = (index - (count - 1) / 2) * HANDLE_GAP;
+  const v = Math.max(lo, Math.min(hi, center + offset));
 
   if (side === 'left' || side === 'right') {
-    return { x: fixedX, y: Math.max(lo, Math.min(hi, v)) };
+    return { x: fixedX, y: v };
   }
-  return { x: Math.max(lo, Math.min(hi, v)), y: fixedY };
+  return { x: v, y: fixedY };
 }
 
 const GAP = LINE_WIDTH * 5; // отступ = 5 толщин линии (адаптивный)
