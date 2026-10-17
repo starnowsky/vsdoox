@@ -91,7 +91,6 @@ function getDistributedPoint(
   side: 'top' | 'right' | 'bottom' | 'left',
   count: number,
   index: number,
-  base?: { x: number; y: number },
 ): { x: number; y: number } {
   const nx = node.position.x;
   const ny = node.position.y;
@@ -128,7 +127,7 @@ function getDistributedPoint(
   }
   if (hi < lo) hi = lo;
 
-  if (count <= 1) return base ?? { x: fixedX, y: fixedY };
+  if (count <= 1) return { x: fixedX, y: fixedY };
 
   // Симметричное распределение вокруг центра стороны:
   // первая линия в центре, каждая следующая смещается на HANDLE_GAP
@@ -325,8 +324,7 @@ export function routeConnections(
       const sourceGroup = sourceGroups.get(`${it.sourceId}:${sourceSide}`) ?? [];
       const sourceIndex = sourceGroup.indexOf(i);
       if (sourceIndex >= 0) {
-        const nearest = nearestBoundaryPoint(sourceNode, it.target);
-        const distributed = getDistributedPoint(sourceNode, sourceSide, sourceGroup.length, sourceIndex, nearest);
+        const distributed = getDistributedPoint(sourceNode, sourceSide, sourceGroup.length, sourceIndex);
         newSource = { x: distributed.x, y: distributed.y };
         newSourceSide = sourceSide;
       }
@@ -336,8 +334,7 @@ export function routeConnections(
       const targetGroup = targetGroups.get(`${it.targetId}:${targetSide}`) ?? [];
       const targetIndex = targetGroup.indexOf(i);
       if (targetIndex >= 0) {
-        const nearest = nearestBoundaryPoint(targetNode, it.source);
-        const distributed = getDistributedPoint(targetNode, targetSide, targetGroup.length, targetIndex, nearest);
+        const distributed = getDistributedPoint(targetNode, targetSide, targetGroup.length, targetIndex);
         newTarget = { x: distributed.x, y: distributed.y };
         newTargetSide = targetSide;
       }
