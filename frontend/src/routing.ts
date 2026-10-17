@@ -149,11 +149,14 @@ function getDistributedPoint(
 const GAP = LINE_WIDTH * 5; // отступ = 5 толщин линии (адаптивный)
 const R = LINE_WIDTH * 2; // радиус «мостика» на пересечении
 
-function orthoPath(source: Pt, waypoints: Pt[], target: Pt): Pt[] {
+function orthoPath(source: Pt, waypoints: Pt[], target: Pt, lane = 0): Pt[] {
   // Линия выходит из источника и заканчивается «по горизонтали» — входим в цель
   // перпендикулярно боковой стороне (последний сегмент горизонтальный), выходя
   // из источника тоже горизонтально. Между соседними точками — Z-образный переход
   // через середину по X, без вертикального «скольжения» вдоль границе узла.
+  // `lane` смещает вертикальный изгиб по горизонтали, чтобы изгибы параллельных
+  // линий между одной парой узлов не накладывались друг на друга. Конечные точки
+  // остаются приклеенными к граням исходного и целевого узлов.
   const pts: Pt[] = [source, ...waypoints, target];
   const path: Pt[] = [{ x: pts[0].x, y: pts[0].y }];
   for (let i = 1; i < pts.length; i++) {
@@ -163,7 +166,7 @@ function orthoPath(source: Pt, waypoints: Pt[], target: Pt): Pt[] {
       // Точки на одной вертикали — чистый вертикальный сегмент.
       if (a.y !== b.y) path.push({ x: b.x, y: b.y });
     } else {
-      const midX = (a.x + b.x) / 2;
+      const midX = (a.x + b.x) / 2 + lane;
       path.push({ x: midX, y: a.y });
       if (a.y !== b.y) path.push({ x: midX, y: b.y });
       path.push({ x: b.x, y: b.y });
@@ -185,10 +188,10 @@ function shiftPath(path: Pt[], d: number): Pt[] {
 }
 
 function signature(it: RouteItem): string {
-  // Не сортируем — направление важно (A->B и B->A — разные сигнатуры).
-  // fwIds не включаем, чтобы линии с одинаковыми source/target, но разными МСЭ,
-  // всё равно разводились глобально (в начале/конце пути).
-  return `${it.sourceId}>${it.targetId}`;
+  // Линии между одной парой узлов (в любую сторону и через любые МСЭ)
+  // разводятся глобально, чтобы вертикальные изгибы не накладывались
+  // друг на друга. Направление не важно.
+  return [it.sourceId, it.targetId].sort().join('>');
 }
 
 interface Seg {
@@ -384,7 +387,25 @@ export function routeConnections(
     });
   });
 
-  const paths = distributedItems.map((it, i) => orthoPath(it.source, adjusted[i], it.target));
+  // Вертикальные изгибы линий между одной парой узлов разводятся по горизонтали,
+  // чтобы не накладываться друг на друга.
+  const bendLane = new Array(distributedItems.length).fill(0);
+  const bendGroups = new Map<string, number[]>();
+  distributedItems.forEach((it, i) => {
+    const key = signature(it);
+    if (!bendGroups.has(key)) bendGroups.set(key, []);
+    bendGroups.get(key)!.push(i);
+  });
+  for (const lines of bendGroups.values()) {
+    const n = lines.length;
+    lines.forEach((idx, j) => {
+      bendLane[idx] = (j - (n - 1) / 2) * GAP;
+    });
+  }
+
+  const paths = distributedItems.map((it, i) =>
+    orthoPath(it.source, adjusted[i], it.target, bendLane[i])
+  );
 
   // Сегменты всех линий — для поиска пересечений.
   const segs: Seg[] = [];
