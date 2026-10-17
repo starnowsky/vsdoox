@@ -526,10 +526,11 @@ class VisioGenerator:
             border = _safe_color(node.get('border'), '#6C8EBF')
             text = _xml_escape(node.get('label') or node.get('id') or '')
 
-        # Connection point at bottom center (X1, Y1) for connector glue.
+        # Connection points только по бокам: левый центр (X1/Y1) и правый центр (X2/Y2).
+        # Верх/низ не используются — линии соединяются только сбоку.
         # Локальная СК Visio: начало в левом нижнем углу, ось Y вверх;
-        # pin = центр формы, LocPin = (w/2, h/2), поэтому нижний центр = (w/2, 0).
-        cp = [(round(w / 2, 3), 0.0, 0)]
+        # pin = центр формы, LocPin = (w/2, h/2).
+        cp = [(0.0, round(h / 2, 3), 0), (round(w, 3), round(h / 2, 3), 0)]
 
         return _shape(sid, f'Node{sid}', pin_x, pin_y, w, h,
                       text=text, fill=fill, border=border,
@@ -537,19 +538,36 @@ class VisioGenerator:
 
     def _connector_shape(self, sid, from_pos, to_pos, label, color,
                          source_sheet, target_sheet, graph_format=False):
-        src_cx = from_pos['x'] + from_pos['w'] / 2
-        src_bottom_y = from_pos['y']
-        tgt_cx = to_pos['x'] + to_pos['w'] / 2
-        tgt_bottom_y = to_pos['y']
+        # Соединяемся только по бокам (left/right).
+        # Если цель справа (или на том же x) — источник использует правый бок,
+        # цель — левый. Иначе — источник левый бок, цель — правый.
+        target_is_right = to_pos['x'] >= from_pos['x']
 
-        stub_y = min(src_bottom_y, tgt_bottom_y) - STUB_INCHES
+        if target_is_right:
+            src_x = from_pos['x'] + from_pos['w']
+            src_y = from_pos['y'] + from_pos['h'] / 2
+            tgt_x = to_pos['x']
+            tgt_y = to_pos['y'] + to_pos['h'] / 2
+            begin_conn = 'X2'  # правая точка источника (IX=2)
+            end_conn = 'X1'    # левая точка цели (IX=1)
+        else:
+            src_x = from_pos['x']
+            src_y = from_pos['y'] + from_pos['h'] / 2
+            tgt_x = to_pos['x'] + to_pos['w']
+            tgt_y = to_pos['y'] + to_pos['h'] / 2
+            begin_conn = 'X1'  # левая точка источника (IX=1)
+            end_conn = 'X2'    # правая точка цели (IX=2)
 
-        pts = [
-            (src_cx, src_bottom_y),
-            (src_cx, stub_y),
-            (tgt_cx, stub_y),
-            (tgt_cx, tgt_bottom_y),
-        ]
+        conn_y = {'X1': 'Y1', 'X2': 'Y2'}
+
+        # Ортогональный путь: прямая линия, если по уровню на одной высоте,
+        # иначе Z-образный через среднюю по X точку.
+        pts = [(src_x, src_y)]
+        if src_y != tgt_y:
+            mid_x = (src_x + tgt_x) / 2
+            pts.append((round(mid_x, 3), src_y))
+            pts.append((round(mid_x, 3), tgt_y))
+        pts.append((tgt_x, tgt_y))
 
         xs = [p[0] for p in pts]
         ys = [p[1] for p in pts]
@@ -570,12 +588,11 @@ class VisioGenerator:
         # source_sheet/target_sheet уже имеют вид 'Sheet.<N>', где N — ID фигуры узла на странице.
         # Ссылка на ячейку Connection Points другой фигуры — классический способ приклеить конец
         # коннектора к точке подключения (Visio сама приводит системы координат фигур).
-        # SHAPETOSTR убран: он делал значение статичным и не поправлял на пин фигуры-коннектора.
         extra_cells = [
-            _cell('BeginX', f'ThePage!{source_sheet}!Connections.X1'),
-            _cell('BeginY', f'ThePage!{source_sheet}!Connections.Y1'),
-            _cell('EndX', f'ThePage!{target_sheet}!Connections.X1'),
-            _cell('EndY', f'ThePage!{target_sheet}!Connections.Y1'),
+            _cell('BeginX', f'ThePage!{source_sheet}!Connections.{begin_conn}'),
+            _cell('BeginY', f'ThePage!{source_sheet}!Connections.{conn_y[begin_conn]}'),
+            _cell('EndX', f'ThePage!{target_sheet}!Connections.{end_conn}'),
+            _cell('EndY', f'ThePage!{target_sheet}!Connections.{conn_y[end_conn]}'),
         ]
 
         return _shape(sid, f'Connector{sid}', pin_x, pin_y, w, h,

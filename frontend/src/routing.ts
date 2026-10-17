@@ -42,27 +42,17 @@ export function nearestBoundaryPoint(
   const h = node.height ?? 60;
   const w = node.width ?? 150;
   const cx = nx + w / 2;
-  const cy = ny + h / 2;
 
   const clamp = (v: number, lo: number, hi: number) => Math.max(lo, Math.min(hi, v));
 
   const dx = target.x - cx;
-  const dy = target.y - cy;
-  const absDx = Math.abs(dx);
-  const absDy = Math.abs(dy);
 
-  // Closer to the left/right side when the horizontal offset dominates.
-  if (absDx * h > absDy * w) {
-    if (dx > 0) {
-      return { x: nx + w, y: clamp(target.y, ny, ny + h), side: 'right' };
-    }
-    return { x: nx, y: clamp(target.y, ny, ny + h), side: 'left' };
+  // Соединяемся только с боковыми сторонами (левой/правой), независимо от
+  // вертикального смещения цели. Верх/низ больше не используются.
+  if (dx > 0) {
+    return { x: nx + w, y: clamp(target.y, ny, ny + h), side: 'right' };
   }
-  // Closer to the top/bottom side.
-  if (dy > 0) {
-    return { x: clamp(target.x, nx, nx + w), y: ny + h, side: 'bottom' };
-  }
-  return { x: clamp(target.x, nx, nx + w), y: ny, side: 'top' };
+  return { x: nx, y: clamp(target.y, ny, ny + h), side: 'left' };
 }
 
 // Вычисляет толщину линии соединения на основе расстояния между объектами.
