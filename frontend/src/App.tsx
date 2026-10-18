@@ -524,7 +524,7 @@ export default function App() {
     return connections.map((c, idx) => {
       const item = routeItems[idx];
       const color = connColor(c);
-      const label = (c.protocol ?? 'any') + (c.port ? '\\' + c.port : '');
+      const label = String(idx + 1);
       const highlighted = pathNodes.has(c.source_id) && pathNodes.has(c.target_id);
       return {
         id: 'conn-' + c.id,
