@@ -84,14 +84,13 @@ export function DatacenterNode(props: NodeProps<Node<DeviceData>>) {
 
 export function NetworkNode(props: NodeProps<Node<DeviceData>>) {
   const name = props.data?.name ?? '';
-  const cidr =
-    props.data?.attributes && typeof props.data.attributes.cidr === 'string'
-      ? props.data.attributes.cidr
-      : '';
+  const attrs = props.data?.attributes;
+  const cidr = attrs && typeof attrs.cidr === 'string' ? attrs.cidr : '';
+  const vlan = attrs && typeof attrs.vlan === 'string' ? attrs.vlan : '';
   return (
     <div className="network">
       <NodeHandles />
-      <div className="network-header">🖧 {name}{cidr ? ' · ' + cidr : ''}</div>
+      <div className="network-header">🖧 {name}{cidr ? ' · ' + cidr : ''}{vlan ? ' · VLAN ' + vlan : ''}</div>
     </div>
   );
 }

@@ -73,8 +73,14 @@ def _node_label(node):
         return 'ЦОД — ' + name
     if t == 'server' and attrs.get('ip'):
         return name + ' · ' + str(attrs['ip'])
-    if t == 'network' and attrs.get('cidr'):
-        return name + ' · ' + str(attrs['cidr'])
+    if t == 'network':
+        parts = []
+        if attrs.get('cidr'):
+            parts.append(str(attrs['cidr']))
+        if attrs.get('vlan'):
+            parts.append('VLAN ' + str(attrs['vlan']))
+        if parts:
+            return name + ' · ' + ' · '.join(parts)
     return name
 
 
