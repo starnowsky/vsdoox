@@ -320,7 +320,7 @@ function toRfNodes(entities: GraphNode[]): Node<DeviceData>[] {
     position: { x: e.x, y: e.y },
     data: { name: e.name, parent_id: e.parent_id ?? undefined, attributes: e.attributes },
   }));
-  return base.map((n) => {
+  const withParent: Node<DeviceData>[] = base.map((n) => {
     const visualParent = resolveVisualParentId(n.id, base);
     return {
       ...n,
@@ -328,6 +328,28 @@ function toRfNodes(entities: GraphNode[]): Node<DeviceData>[] {
       extent: visualParent && n.type !== 'firewall' ? ('parent' as const) : undefined,
     };
   });
+  // React Flow вычисляет абсолютные позиции дочерних узлов исходя из позиции
+  // родителя. Если родитель идёт в массиве позже ребёнка, дочерний узел
+  // размещается по относительным координатам как по абсолютным — объекты
+  // разлетаются по схеме при загрузке. Гарантируем порядок «родитель раньше ребёнка».
+  return sortParentsFirst(withParent);
+}
+
+/** Сортирует узлы так, чтобы родительские узлы шли в массиве раньше дочерних.
+    DFS с защитой от циклов — при зацикливании порядок вставки остаётся стабильным. */
+function sortParentsFirst(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
+  const byId = new Map(nodes.map((n) => [n.id, n]));
+  const visited = new Set<string>();
+  const result: Node<DeviceData>[] = [];
+  const visit = (n: Node<DeviceData>) => {
+    if (visited.has(n.id)) return;
+    visited.add(n.id);
+    const parent = n.parentId ? byId.get(n.parentId) : undefined;
+    if (parent) visit(parent);
+    result.push(n);
+  };
+  nodes.forEach((n) => visit(n));
+  return result;
 }
 
 function computeSizes(nodes: Node<DeviceData>[]): Map<string, { w: number; h: number }> {
@@ -1211,8 +1233,10 @@ export default function App() {
 
   const handleEditSave = useCallback(() => {
     if (!editingNodeId) return;
-    setNodes((nds) =>
-      autoLayout(
+    setNodes((nds) => {
+      const target = nds.find((n) => n.id === editingNodeId);
+      const visualParent = target ? visualParentFor(editParent || null, nds) : undefined;
+      return autoLayout(
         nds.map((n) =>
           n.id === editingNodeId
             ? {
@@ -1223,11 +1247,13 @@ export default function App() {
                   parent_id: editParent || undefined,
                   attributes: editAttrs,
                 },
+                parentId: visualParent,
+                extent: visualParent && n.type !== 'firewall' ? ('parent' as const) : undefined,
               }
             : n,
         ),
-      ),
-    );
+      );
+    });
     setEditingNodeId(null);
   }, [editingNodeId, editName, editParent, editAttrs, setNodes]);
 
