@@ -115,6 +115,8 @@ def preview():
 
 @app.route('/api/projects', methods=['POST'])
 def create_project():
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     try:
         data = request.get_json(silent=True) or {}
         owner = data.get('owner') or data.get('owner_name')
@@ -146,6 +148,8 @@ def project_get(project_id):
 
 @app.route('/api/projects/<int:project_id>', methods=['PUT'])
 def project_save(project_id):
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     data = request.get_json(silent=True) or {}
     name = data.get('name')
     nodes = data.get('nodes', [])
@@ -160,6 +164,8 @@ def project_save(project_id):
 
 @app.route('/api/projects/<int:project_id>', methods=['DELETE'])
 def project_delete(project_id):
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     storage.delete_project(project_id)
     return jsonify({'ok': True})
 
@@ -175,6 +181,21 @@ def _current_identity():
     if not token:
         return None
     return admin.resolve_token(token)
+
+
+def _write_allowed():
+    """Проверяет право на запись для текущего пользователя.
+
+    Админ — всегда. Остальные — по флагу access группы (read = запрет записи).
+    Пользователи без токена и без группы — как раньше (полный доступ).
+    """
+    ident = _current_identity()
+    if not ident:
+        return True
+    username, is_admin = ident
+    if is_admin:
+        return True
+    return storage.user_access(username) == 'write'
 
 
 def _can_view(project, username, is_admin):
@@ -230,6 +251,8 @@ def catalog_get(project_id):
 
 @app.route('/api/catalog/<int:project_id>', methods=['DELETE'])
 def catalog_delete(project_id):
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     ident = _current_identity()
     if not ident:
         return jsonify({'error': 'Требуется авторизация'}), 401
@@ -250,12 +273,15 @@ def objects_list():
         return jsonify({'error': 'Требуется авторизация'}), 401
     username, is_admin = ident
     return jsonify({'objects': storage.list_visible_objects(username, is_admin),
-                    'viewer': username, 'is_admin': is_admin})
+                    'viewer': username, 'is_admin': is_admin,
+                    'access': storage.user_access(username)})
 
 
 @app.route('/api/objects', methods=['POST'])
 def objects_upsert():
     """Сохранить объект схемы в библиотеку (доступен сразу, без сохранения схемы)."""
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     ident = _current_identity()
     if not ident:
         return jsonify({'error': 'Требуется авторизация'}), 401
@@ -461,7 +487,8 @@ def admin_groups_create():
     if err:
         return err
     try:
-        gid = admin.create_group((request.get_json(silent=True) or {}).get('name'))
+        data = request.get_json(silent=True) or {}
+        gid = admin.create_group(data.get('name'), data.get('access'))
         return jsonify({'id': gid}), 201
     except ValueError as e:
         return jsonify({'error': str(e)}), 400
@@ -473,6 +500,20 @@ def admin_groups_delete(gid):
     if err:
         return err
     admin.delete_group(gid)
+    return jsonify({'ok': True})
+
+
+@app.route('/api/admin/groups/<int:gid>', methods=['PUT'])
+def admin_groups_set_access(gid):
+    err = _require_admin()
+    if err:
+        return err
+    data = request.get_json(silent=True) or {}
+    access = data.get('access')
+    try:
+        admin.set_group_access(gid, access)
+    except ValueError as e:
+        return jsonify({'error': str(e)}), 400
     return jsonify({'ok': True})
 
 
@@ -515,6 +556,8 @@ def custom_types_list():
 
 @app.route('/api/custom-types', methods=['POST'])
 def custom_types_create():
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     try:
         tid = storage.create_custom_type((request.get_json(silent=True) or {}).get('name'))
         return jsonify({'id': tid}), 201
@@ -524,6 +567,8 @@ def custom_types_create():
 
 @app.route('/api/custom-types/<int:tid>', methods=['DELETE'])
 def custom_types_delete(tid):
+    if not _write_allowed():
+        return jsonify({'error': 'Доступ только для чтения'}), 403
     storage.delete_custom_type(tid)
     return jsonify({'ok': True})
 
@@ -579,7 +624,8 @@ def auth_login():
     token = admin.user_login(username, data.get('password'))
     if not token:
         return jsonify({'error': 'Неверный логин или пароль'}), 401
-    return jsonify({'token': token, 'username': username, 'group_id': admin.get_user_group(username)})
+    return jsonify({'token': token, 'username': username, 'group_id': admin.get_user_group(username),
+                    'access': storage.user_access(username)})
 
 
 if __name__ == '__main__':

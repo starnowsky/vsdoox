@@ -422,6 +422,7 @@ export default function App() {
   const [loginError, setLoginError] = useState('');
 
   const [owner, setOwner] = useState<string>(() => localStorage.getItem('vsdoox.owner') ?? '');
+  const [userAccess, setUserAccess] = useState<'read' | 'write' | null>(null);
   const [projectName, setProjectName] = useState('Схема L2');
   const [projectId, setProjectId] = useState<number | null>(null);
   const [projectOwner, setProjectOwner] = useState<string | null>(null);
@@ -452,7 +453,10 @@ export default function App() {
   useEffect(() => {
     if (!userToken) return;
     listObjects()
-      .then((r) => setLibrary(r.objects))
+      .then((r) => {
+        setLibrary(r.objects);
+        if (r.access) setUserAccess(r.access);
+      })
       .catch(() => {});
   }, [userToken]);
 
@@ -708,6 +712,7 @@ export default function App() {
       localStorage.setItem('vsdoox.user.name', res.username);
       setUserToken(res.token);
       setOwner(res.username);
+      setUserAccess(res.access ?? 'write');
       localStorage.setItem('vsdoox.owner', res.username);
     } catch (e) {
       setLoginError((e as Error).message);
@@ -722,6 +727,7 @@ export default function App() {
     localStorage.removeItem('vsdoox.user.token');
     localStorage.removeItem('vsdoox.user.name');
     setUserToken('');
+    setUserAccess(null);
   };
 
   const handleAddCustomType = async () => {
@@ -765,14 +771,16 @@ export default function App() {
     };
     setNodes((nds) => autoLayout(nds.concat(node)));
     // Сохраняем объект в библиотеку сразу (до сохранения схемы), чтобы он был доступен в новых схемах.
-    saveObject({
-      node_id: String(node.id),
-      type: String(node.type ?? 'server'),
-      name,
-      attributes: attrs,
-    })
-      .then(() => listObjects().then((r) => setLibrary(r.objects)))
-      .catch(() => {});
+    if (userAccess !== 'read') {
+      saveObject({
+        node_id: String(node.id),
+        type: String(node.type ?? 'server'),
+        name,
+        attributes: attrs,
+      })
+        .then(() => listObjects().then((r) => setLibrary(r.objects)))
+        .catch(() => {});
+    }
     setEName('');
     setEAttr('');
     setEParent('');
@@ -859,6 +867,10 @@ export default function App() {
   }, [owner]);
 
   const handleSave = useCallback(async () => {
+    if (userAccess === 'read') {
+      setStatus('Режим только чтения: сохранение запрещено');
+      return;
+    }
     if (!owner.trim()) {
       setStatus('Укажите владельца');
       return;
@@ -1164,6 +1176,10 @@ export default function App() {
 
   const handleDelete = useCallback(
     async (id: number) => {
+      if (userAccess === 'read') {
+        setStatus('Режим только чтения: удаление запрещено');
+        return;
+      }
       try {
         await deleteProject(id);
         if (projectId === id) handleNew();
@@ -1277,7 +1293,7 @@ export default function App() {
 
             <div className="row">
               <button onClick={handleNew}>Новая</button>
-              <button className="primary" onClick={handleSave}>
+              <button className="primary" disabled={userAccess === 'read'} onClick={handleSave}>
                 {projectOwner != null && projectOwner !== owner ? 'Сохранить копию' : 'Сохранить'}
               </button>
             </div>
@@ -1290,7 +1306,7 @@ export default function App() {
                     <button className="link" onClick={() => handleLoad(p.id)}>
                       {p.name} (#{p.id})
                     </button>
-                    <button className="del" onClick={() => handleDelete(p.id)}>✕</button>
+                    <button className="del" disabled={userAccess === 'read'} onClick={() => handleDelete(p.id)}>✕</button>
                   </li>
                 ))}
               </ul>
@@ -1712,7 +1728,7 @@ export default function App() {
             ))}
             <div className="row">
               <button onClick={handleEditCancel}>Отмена</button>
-              <button className="primary" onClick={handleEditSave}>Сохранить</button>
+              <button className="primary" disabled={userAccess === 'read'} onClick={handleEditSave}>Сохранить</button>
             </div>
           </div>
         </div>

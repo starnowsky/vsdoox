@@ -152,20 +152,35 @@ def save_keycloak(data):
 def list_groups():
     with SessionLocal() as s:
         rows = s.execute(select(Group).order_by(Group.name)).scalars().all()
-        return [{'id': g.id, 'name': g.name} for g in rows]
+        return [{'id': g.id, 'name': g.name, 'access': g.access or 'write'} for g in rows]
 
 
-def create_group(name):
+def create_group(name, access='write'):
     name = (name or '').strip()
     if not name:
         raise ValueError('Название группы обязательно')
+    access = (access or 'write').strip()
+    if access not in ('read', 'write'):
+        raise ValueError('Права доступа должны быть read или write')
     with SessionLocal() as s:
         if s.execute(select(Group).where(Group.name == name)).scalar_one_or_none():
             raise ValueError('Группа уже существует')
-        g = Group(name=name)
+        g = Group(name=name, access=access)
         s.add(g)
         s.commit()
         return g.id
+
+
+def set_group_access(gid, access):
+    access = (access or 'write').strip()
+    if access not in ('read', 'write'):
+        raise ValueError('Права доступа должны быть read или write')
+    with SessionLocal() as s:
+        g = s.get(Group, gid)
+        if not g:
+            raise ValueError('Группа не найдена')
+        g.access = access
+        s.commit()
 
 
 def delete_group(gid):

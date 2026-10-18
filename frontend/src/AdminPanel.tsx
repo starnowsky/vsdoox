@@ -10,11 +10,12 @@ import {
   adminListUsers,
   adminLogin,
   adminSaveKeycloak,
+  adminSetGroupAccess,
   adminSetProjectGroup,
   adminSetup,
   adminStatus,
 } from './api';
-import type { AdminUser, CatalogProject } from './api';
+import type { AdminGroup, AdminUser, CatalogProject } from './api';
 
 const TOKEN_KEY = 'vsdoox.admin.token';
 
@@ -37,7 +38,7 @@ export default function AdminPanel() {
   const [status, setStatus] = useState('');
 
   const [kc, setKc] = useState<KeycloakConfig>(EMPTY_KC);
-  const [groups, setGroups] = useState<Array<{ id: number; name: string }>>([]);
+  const [groups, setGroups] = useState<AdminGroup[]>([]);
   const [users, setUsers] = useState<AdminUser[]>([]);
   const [allProjects, setAllProjects] = useState<CatalogProject[]>([]);
 
@@ -128,6 +129,17 @@ export default function AdminPanel() {
       await adminCreateGroup(token, newGroup);
       setNewGroup('');
       setGroups((await adminListGroups(token)).groups);
+    } catch (e) {
+      setError((e as Error).message);
+    }
+  };
+
+  const handleChangeGroupAccess = async (id: number, access: 'read' | 'write') => {
+    setError('');
+    try {
+      await adminSetGroupAccess(token, id, access);
+      setGroups((await adminListGroups(token)).groups);
+      setStatus('Права группы обновлены');
     } catch (e) {
       setError((e as Error).message);
     }
@@ -277,9 +289,23 @@ export default function AdminPanel() {
         </div>
         <ul className="admin-list">
           {groups.map((g) => (
-            <li key={g.id}>
-              <span>{g.name}</span>
-              <button className="del" onClick={() => handleDeleteGroup(g.id)}>✕</button>
+            <li key={g.id} style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+              <span style={{ minWidth: 140 }}>{g.name}</span>
+              <span className="muted" style={{ marginRight: 10 }}>
+                Права: {g.access === 'read' ? 'только чтение' : 'редактирование'}
+              </span>
+              <select
+                value={g.access}
+                onChange={(e) =>
+                  handleChangeGroupAccess(g.id, e.target.value as 'read' | 'write')
+                }
+              >
+                <option value="write">Редактирование</option>
+                <option value="read">Только чтение</option>
+              </select>
+              <button className="del" onClick={() => handleDeleteGroup(g.id)}>
+                ✕
+              </button>
             </li>
           ))}
         </ul>

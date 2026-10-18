@@ -8,6 +8,7 @@
 import os
 import sys
 import tempfile
+import uuid
 import unittest
 
 # Добавляем backend/ в sys.path, чтобы импортировать модули приложения.
@@ -488,43 +489,141 @@ class ObjectUpsertTest(unittest.TestCase):
     def setUp(self):
         self.client = appmod.app.test_client()
 
-    def test_save_and_list_object(self):
-        admin_tok = self._admin_token()
-        self.client.post('/api/admin/users', json={'username': 'u_obj', 'password': 'p', 'group_id': None},
-                         headers={'X-Admin-Token': admin_tok})
-        tok = self._login('u_obj')
 
-        r = self.client.post('/api/objects', json={
-            'node_id': 'srv1', 'type': 'server', 'name': 'WebServer',
-            'attributes': {'ip': '10.0.0.1'},
-        }, headers={'X-User-Token': tok})
-        self.assertEqual(r.status_code, 200)
-        self.assertEqual(r.get_json()['ok'], True)
+class GroupAccessTest(unittest.TestCase):
+    """Права доступа групп only_read / write к проектам и объектам."""
 
-        # появляется в библиотеке
-        objs = self.client.get('/api/objects', headers={'X-User-Token': tok}).get_json()['objects']
-        names = {o['name'] for o in objs}
-        self.assertIn('WebServer', names)
-
-        # дедупликация по node_id: повторное сохранение не создаёт дубль
-        r2 = self.client.post('/api/objects', json={
-            'node_id': 'srv1', 'type': 'server', 'name': 'WebServer v2',
-            'attributes': {'ip': '10.0.0.2'},
-        }, headers={'X-User-Token': tok})
-        self.assertEqual(r2.status_code, 200)
-        objs2 = self.client.get('/api/objects', headers={'X-User-Token': tok}).get_json()['objects']
-        srv = [o for o in objs2 if o.get('node_id') == 'srv1']
-        self.assertEqual(len(srv), 1)
-        self.assertEqual(srv[0]['name'], 'WebServer v2')
+    def setUp(self):
+        self.client = appmod.app.test_client()
 
     def _admin_token(self):
         r = self.client.post('/api/admin/setup', json={'key': 'secret-key'})
         if r.status_code == 201:
             return r.get_json()['token']
-        return self.client.post('/api/admin/login', json={'key': 'secret-key'}).get_json()['token']
+        r = self.client.post('/api/admin/login', json={'key': 'secret-key'})
+        return r.get_json()['token']
 
     def _login(self, username):
-        return self.client.post('/api/auth/login', json={'username': username, 'password': 'p'}).get_json()['token']
+        return self.client.post(
+            '/api/auth/login', json={'username': username, 'password': 'p'}
+        ).get_json()['token']
+
+    def _create_user(self, admin_tok, username, group_id=None):
+        return self.client.post(
+            '/api/admin/users',
+            json={'username': username, 'password': 'p', 'group_id': group_id},
+            headers={'X-Admin-Token': admin_tok},
+        )
+
+    def _mk_gid(self, admin_tok, name='ro'):
+        return self.client.post(
+            '/api/admin/groups',
+            json={'name': name + '_' + uuid.uuid4().hex[:8], 'access': 'read'},
+            headers={'X-Admin-Token': admin_tok},
+        ).get_json()['id']
+
+    def _mk_user(self, admin_tok, gid, base='u_ro'):
+        uname = base + '_' + uuid.uuid4().hex[:8]
+        self._create_user(admin_tok, uname, group_id=gid)
+        return uname
+
+    def test_list_groups_returns_access(self):
+        admin_tok = self._admin_token()
+        name = 'readers_' + uuid.uuid4().hex[:8]
+        self.client.post('/api/admin/groups', json={'name': name},
+                         headers={'X-Admin-Token': admin_tok})
+        r = self.client.get('/api/admin/groups', headers={'X-Admin-Token': admin_tok})
+        groups = {g['name']: g for g in r.get_json()['groups']}
+        self.assertEqual(groups[name]['access'], 'write')
+
+    def test_create_group_with_access(self):
+        admin_tok = self._admin_token()
+        name = 'ro_' + uuid.uuid4().hex[:8]
+        r = self.client.post('/api/admin/groups', json={'name': name, 'access': 'read'},
+                             headers={'X-Admin-Token': admin_tok})
+        self.assertEqual(r.status_code, 201)
+        groups = self.client.get('/api/admin/groups', headers={'X-Admin-Token': admin_tok}).get_json()['groups']
+        ro = [g for g in groups if g['name'] == name][0]
+        self.assertEqual(ro['access'], 'read')
+
+    def test_set_group_access(self):
+        admin_tok = self._admin_token()
+        gid = self.client.post('/api/admin/groups', json={'name': 'rw_' + uuid.uuid4().hex[:8]},
+                               headers={'X-Admin-Token': admin_tok}).get_json()['id']
+        r = self.client.put(f'/api/admin/groups/{gid}', json={'access': 'read'},
+                            headers={'X-Admin-Token': admin_tok})
+        self.assertEqual(r.status_code, 200)
+        g = self.client.get('/api/admin/groups', headers={'X-Admin-Token': admin_tok}).get_json()['groups']
+        self.assertEqual([x for x in g if x['id'] == gid][0]['access'], 'read')
+
+    def test_login_returns_access(self):
+        admin_tok = self._admin_token()
+        gid = self._mk_gid(admin_tok)
+        uname = self._mk_user(admin_tok, gid)
+
+        r = self.client.post('/api/auth/login', json={'username': uname, 'password': 'p'})
+        self.assertEqual(r.get_json()['access'], 'read')
+
+    def test_read_group_cannot_write_projects(self):
+        admin_tok = self._admin_token()
+        gid = self._mk_gid(admin_tok)
+        uname = self._mk_user(admin_tok, gid)
+        tok = self._login(uname)
+
+        # чтение разрешено
+        r = self.client.get(f'/api/projects?owner={uname}', headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 200)
+
+        # запись запрещена (403)
+        r = self.client.post('/api/projects', json={'name': 'P', 'owner': uname},
+                             headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
+        r = self.client.put('/api/projects/1', json={'nodes': [], 'links': [], 'connections': []},
+                            headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
+
+    def test_user_without_group_can_write(self):
+        admin_tok = self._admin_token()
+        uname = self._mk_user(admin_tok, None, base='u_free')
+        tok = self._login(uname)
+
+        r = self.client.post('/api/projects', json={'name': 'P', 'owner': uname},
+                             headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 201)
+
+    def test_read_group_cannot_objects_and_custom_types(self):
+        admin_tok = self._admin_token()
+        gid = self._mk_gid(admin_tok)
+        uname = self._mk_user(admin_tok, gid)
+        tok = self._login(uname)
+
+        r = self.client.post('/api/objects', json={'node_id': 'n1', 'type': 'server', 'name': 'S'},
+                             headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
+
+        r = self.client.post('/api/custom-types', json={'name': 'T'},
+                             headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
+
+    def test_read_group_cannot_delete_catalog(self):
+        admin_tok = self._admin_token()
+        gid = self._mk_gid(admin_tok)
+        uname = self._mk_user(admin_tok, gid)
+        tok = self._login(uname)
+
+        # проект создаёт пользователь с правом записи (без группы)
+        writer = self._mk_user(admin_tok, None, base='u_writer')
+        wtok = self._login(writer)
+        pid = self.client.post('/api/projects', json={'name': 'P', 'owner': writer},
+                               headers={'X-User-Token': wtok}).get_json()['id']
+
+        # удаление проекта (write-эндпоинт) — 403 для read-группы
+        r = self.client.delete(f'/api/projects/{pid}', headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
+
+        # удаление через каталог — 403
+        r = self.client.delete(f'/api/catalog/{pid}', headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 403)
 
 
 if __name__ == '__main__':

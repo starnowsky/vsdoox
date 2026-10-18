@@ -95,7 +95,7 @@ export interface ObjectItem {
   updated_at?: string;
 }
 
-export function listObjects(): Promise<{ objects: ObjectItem[]; viewer: string; is_admin: boolean }> {
+export function listObjects(): Promise<{ objects: ObjectItem[]; viewer: string; is_admin: boolean; access: 'read' | 'write' }> {
   return request('/api/objects');
 }
 
@@ -236,6 +236,7 @@ export function adminSaveKeycloak(token: string, data: Record<string, unknown>):
 export interface AdminGroup {
   id: number;
   name: string;
+  access: 'read' | 'write';
 }
 
 export function adminListGroups(token: string): Promise<{ groups: AdminGroup[] }> {
@@ -244,6 +245,10 @@ export function adminListGroups(token: string): Promise<{ groups: AdminGroup[] }
 
 export function adminCreateGroup(token: string, name: string): Promise<{ id: number }> {
   return adminRequest('/api/admin/groups', token, { method: 'POST', body: JSON.stringify({ name }) });
+}
+
+export function adminSetGroupAccess(token: string, id: number, access: 'read' | 'write'): Promise<{ ok: boolean }> {
+  return adminRequest('/api/admin/groups/' + id, token, { method: 'PUT', body: JSON.stringify({ access }) });
 }
 
 export function adminDeleteGroup(token: string, id: number): Promise<{ ok: boolean }> {
@@ -308,7 +313,7 @@ export function deleteCustomType(id: number): Promise<{ ok: boolean }> {
 
 // --- Авторизация (логин/пароль) ---
 
-export function authLogin(username: string, password: string): Promise<{ token: string; username: string }> {
+export function authLogin(username: string, password: string): Promise<{ token: string; username: string; access: 'read' | 'write'; group_id: number | null }> {
   return request('/api/auth/login', { method: 'POST', body: JSON.stringify({ username, password }) });
 }
 

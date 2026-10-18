@@ -119,6 +119,8 @@ class Group(Base):
     __tablename__ = 'groups'
     id = Column(Integer, primary_key=True)
     name = Column(String(120), unique=True, nullable=False)
+    # Права группы: 'read' — только просмотр схем, 'write' — полный доступ.
+    access = Column(String(16), default='write', nullable=False)
 
 
 class LocalUser(Base):

@@ -20,7 +20,7 @@ NODE_TYPES = {'server', 'firewall', 'network', 'datacenter'}
 _DEFAULT_SQLITE_PATH = os.path.join(os.path.dirname(__file__), 'vsdoox.db')
 
 # Версия схемы БД для отслеживания миграций
-SCHEMA_VERSION = 6
+SCHEMA_VERSION = 7
 
 
 def _db_url():
@@ -154,6 +154,16 @@ def _migrate_schema():
     # УБРАНО: _ensure_composite_pk - опасная операция удаления таблиц!
     # Составной PK (id, project_id) теперь задаётся в моделях изначально.
 
+    # Миграция 6: добавление access в groups (read/write права доступа)
+    if current_version < 6:
+        if 'groups' in insp.get_table_names():
+            cols = {c['name'] for c in insp.get_columns('groups')}
+            if 'access' not in cols:
+                with _engine.begin() as conn:
+                    conn.exec_driver_sql("ALTER TABLE groups ADD COLUMN access VARCHAR(16) DEFAULT 'write' NOT NULL")
+        current_version = 6
+        _set_schema_version(current_version)
+
 
 def _ensure_id(value):
     if value in (None, ''):
@@ -232,6 +242,23 @@ def get_user_group_id(username):
             select(LocalUser).where(LocalUser.username == username)
         ).scalar_one_or_none()
         return u.group_id if u else None
+
+
+def user_access(username):
+    """Уровень доступа пользователя: 'read' или 'write'.
+
+    Пользователь без группы имеет полный доступ ('write'), как и раньше.
+    Если группа задана — возвращает её флаг access ('read' или 'write').
+    """
+    username = (username or '').strip()
+    if not username:
+        return 'write'
+    group_id = get_user_group_id(username)
+    if group_id is None:
+        return 'write'
+    with session_scope() as session:
+        g = session.get(Group, group_id)
+        return (g.access or 'write') if g else 'write'
 
 
 def create_project(name, owner_name, group_id=None):
