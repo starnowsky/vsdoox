@@ -801,12 +801,12 @@ export default function App() {
         attributes: attrs,
       })
         .then(() => listObjects().then((r) => setLibrary(r.objects)))
-        .catch(() => {});
+        .catch((e) => setStatus((e as Error).message || 'Не удалось сохранить объект в библиотеку'));
     }
     setEName('');
     setEAttr('');
     setEParent('');
-  }, [eType, eName, eParent, eAttr, nodes, setNodes]);
+  }, [eType, eName, eParent, eAttr, nodes, setNodes, userAccess]);
 
   const deleteNode = useCallback(
     (id: string) => {
@@ -914,10 +914,18 @@ export default function App() {
       await saveProject(pid, { name: projectName, ...graph });
       setStatus('Сохранено (проект #' + pid + ')');
       await refreshProjects();
+      // Обновляем библиотеку, чтобы только что сохранённые объекты появились во вкладке «Библиотека».
+      try {
+        const robjs = await listObjects();
+        setLibrary(robjs.objects);
+        if (robjs.access) setUserAccess(robjs.access);
+      } catch (e) {
+        setStatus((e as Error).message || 'Не удалось обновить библиотеку');
+      }
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [owner, projectName, projectId, projectOwner, nodes, connections, refreshProjects]);
+  }, [owner, projectName, projectId, projectOwner, nodes, connections, refreshProjects, userAccess, listObjects]);
 
   const handleExport = useCallback(async () => {
     try {
@@ -1367,7 +1375,7 @@ export default function App() {
                   placeholder={primaryAttrFor(eType)!.placeholder}
                 />
               )}
-              <button className="primary" onClick={addEntity}>Добавить</button>
+              <button className="primary" disabled={userAccess === 'read'} onClick={addEntity}>Добавить</button>
             </section>
           </>
         )}
