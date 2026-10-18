@@ -84,6 +84,7 @@ export function catalogProjects(): Promise<{ folders: CatalogFolder[]; viewer: s
 
 export interface ObjectItem {
   id: number;
+  node_id: string;
   type: string;
   name: string;
   attributes: Record<string, unknown>;
@@ -96,6 +97,15 @@ export interface ObjectItem {
 
 export function listObjects(): Promise<{ objects: ObjectItem[]; viewer: string; is_admin: boolean }> {
   return request('/api/objects');
+}
+
+export function saveObject(payload: {
+  node_id: string; type: string; name: string; attributes?: Record<string, unknown>;
+}): Promise<{ ok: boolean }> {
+  return request('/api/objects', {
+    method: 'POST',
+    body: JSON.stringify(payload),
+  });
 }
 
 export function getCatalogProject(id: number): Promise<Project> {

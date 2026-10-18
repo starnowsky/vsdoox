@@ -198,7 +198,7 @@ def _conn_dict(c):
 
 def _object_dict(o):
     return {
-        'id': o.id, 'type': o.type, 'name': o.name,
+        'id': o.id, 'node_id': o.node_id, 'type': o.type, 'name': o.name,
         'attributes': o.attributes or {},
         'group_id': o.group_id,
         'group_name': o.group.name if o.group else None,
@@ -384,6 +384,19 @@ def get_project(project_id):
             'links': [_link_dict(l) for l in links],
             'connections': [_conn_dict(c) for c in conns],
         }
+
+
+def upsert_object(username, node_id, ntype, name, attrs):
+    """Сохраняет объект схемы в библиотеку сразу при добавлении на холст.
+
+    Ключ дедупликации — node_id: повторное сохранение того же узла обновляет
+    существующую запись, а не создаёт дубль.
+    """
+    owner_id = get_or_create_user(username)
+    group_id = get_user_group_id(username)
+    with session_scope() as session:
+        _upsert_object(session, node_id, ntype, name,
+                       _norm_attributes(attrs), group_id, owner_id)
 
 
 def _upsert_object(session, node_id, ntype, name, attrs, group_id, owner_id):

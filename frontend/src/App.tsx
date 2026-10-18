@@ -116,6 +116,7 @@ import {
   listCustomTypes,
   listObjects,
   listProjects,
+  saveObject,
   saveProject,
 } from './api';
 import type { CustomType, ObjectItem, ProjectSummary } from './api';
@@ -763,6 +764,15 @@ export default function App() {
       data: { name, parent_id: logicalParent ?? undefined, attributes: attrs },
     };
     setNodes((nds) => autoLayout(nds.concat(node)));
+    // Сохраняем объект в библиотеку сразу (до сохранения схемы), чтобы он был доступен в новых схемах.
+    saveObject({
+      node_id: String(node.id),
+      type: String(node.type ?? 'server'),
+      name,
+      attributes: attrs,
+    })
+      .then(() => listObjects().then((r) => setLibrary(r.objects)))
+      .catch(() => {});
     setEName('');
     setEAttr('');
     setEParent('');

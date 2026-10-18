@@ -253,6 +253,24 @@ def objects_list():
                     'viewer': username, 'is_admin': is_admin})
 
 
+@app.route('/api/objects', methods=['POST'])
+def objects_upsert():
+    """Сохранить объект схемы в библиотеку (доступен сразу, без сохранения схемы)."""
+    ident = _current_identity()
+    if not ident:
+        return jsonify({'error': 'Требуется авторизация'}), 401
+    username, _is_admin = ident
+    data = request.get_json(silent=True) or {}
+    node_id = data.get('node_id') or data.get('id')
+    ntype = (data.get('type') or '').strip() or 'server'
+    name = (data.get('name') or '').strip()
+    if not node_id or not name:
+        return jsonify({'error': 'node_id и name обязательны'}), 400
+    storage.upsert_object(username, str(node_id), ntype, name,
+                          data.get('attributes'))
+    return jsonify({'ok': True})
+
+
 @app.route('/api/projects/<int:project_id>/connections.xlsx', methods=['GET'])
 def project_connections_xlsx(project_id):
     ident = _current_identity()

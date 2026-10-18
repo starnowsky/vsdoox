@@ -482,5 +482,50 @@ class RegressionTests(unittest.TestCase):
         self.assertIn('visio/windows.xml', names)
 
 
+class ObjectUpsertTest(unittest.TestCase):
+    """Новый endpoint POST /api/objects — сохранение объекта в библиотеку."""
+
+    def setUp(self):
+        self.client = appmod.app.test_client()
+
+    def test_save_and_list_object(self):
+        admin_tok = self._admin_token()
+        self.client.post('/api/admin/users', json={'username': 'u_obj', 'password': 'p', 'group_id': None},
+                         headers={'X-Admin-Token': admin_tok})
+        tok = self._login('u_obj')
+
+        r = self.client.post('/api/objects', json={
+            'node_id': 'srv1', 'type': 'server', 'name': 'WebServer',
+            'attributes': {'ip': '10.0.0.1'},
+        }, headers={'X-User-Token': tok})
+        self.assertEqual(r.status_code, 200)
+        self.assertEqual(r.get_json()['ok'], True)
+
+        # появляется в библиотеке
+        objs = self.client.get('/api/objects', headers={'X-User-Token': tok}).get_json()['objects']
+        names = {o['name'] for o in objs}
+        self.assertIn('WebServer', names)
+
+        # дедупликация по node_id: повторное сохранение не создаёт дубль
+        r2 = self.client.post('/api/objects', json={
+            'node_id': 'srv1', 'type': 'server', 'name': 'WebServer v2',
+            'attributes': {'ip': '10.0.0.2'},
+        }, headers={'X-User-Token': tok})
+        self.assertEqual(r2.status_code, 200)
+        objs2 = self.client.get('/api/objects', headers={'X-User-Token': tok}).get_json()['objects']
+        srv = [o for o in objs2 if o.get('node_id') == 'srv1']
+        self.assertEqual(len(srv), 1)
+        self.assertEqual(srv[0]['name'], 'WebServer v2')
+
+    def _admin_token(self):
+        r = self.client.post('/api/admin/setup', json={'key': 'secret-key'})
+        if r.status_code == 201:
+            return r.get_json()['token']
+        return self.client.post('/api/admin/login', json={'key': 'secret-key'}).get_json()['token']
+
+    def _login(self, username):
+        return self.client.post('/api/auth/login', json={'username': username, 'password': 'p'}).get_json()['token']
+
+
 if __name__ == '__main__':
     unittest.main()
