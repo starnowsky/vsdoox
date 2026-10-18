@@ -187,11 +187,13 @@ function shiftPath(path: Pt[], d: number): Pt[] {
   return path.map((p) => ({ x: p.x + px * d, y: p.y + py * d }));
 }
 
-function signature(it: RouteItem): string {
-  // Линии между одной парой узлов (в любую сторону и через любые МСЭ)
-  // разводятся глобально, чтобы вертикальные изгибы не накладывались
-  // друг на друга. Направление не важно.
-  return [it.sourceId, it.targetId].sort().join('>');
+function bendCorridorKey(it: RouteItem): string {
+  // Коридор вертикального изгиба — середина по X между точками подключения.
+  // Линии с одинаковым коридором разводятся по горизонтали, чтобы их
+  // вертикальные изгибы не накладывались, независимо от пары объектов.
+  // Округление до 0.5px — защита от шума плавающей точки.
+  const midX = (it.source.x + it.target.x) / 2;
+  return String(Math.round(midX * 2));
 }
 
 interface Seg {
@@ -407,12 +409,13 @@ export function routeConnections(
     });
   });
 
-  // Вертикальные изгибы линий между одной парой узлов разводятся по горизонтали,
-  // чтобы не накладываться друг на друга.
+  // Вертикальные изгибы линий, у которых изгиб попадает в один коридор (одна и
+  // та же середина по X между источником и целью), разводятся по горизонтали,
+  // чтобы не накладываться друг на друга — вне зависимости от пары объектов.
   const bendLane = new Array(distributedItems.length).fill(0);
   const bendGroups = new Map<string, number[]>();
   distributedItems.forEach((it, i) => {
-    const key = signature(it);
+    const key = bendCorridorKey(it);
     if (!bendGroups.has(key)) bendGroups.set(key, []);
     bendGroups.get(key)!.push(i);
   });
@@ -467,7 +470,7 @@ export const ROUTING_SYMBOLS = {
   crossing,
   buildPath,
   midpointAlongPath,
-  signature,
+  bendCorridorKey,
   getLineWidthForConnection,
   LINE_WIDTH,
   MIN_CONN_DIST,
