@@ -3,6 +3,94 @@ import { ReactFlow, Background, Controls, MiniMap, useNodesState, type Edge, typ
 import { toSvg } from 'html-to-image';
 
 import { DatacenterNode, DeviceNode, NetworkNode } from './nodes';
+import Catalog from './Catalog';
+
+// ================= SVG stamp helpers =================
+
+const STAMP_COLOR = '#d32f2f'; // var(--stamp)
+const STAMP_LIGHT = 'rgba(211,47,47,0.18)'; // var(--stamp-light)
+const STAMP_BASE_WIDTH = 310; // совпадает с .diagram-stamp { width: 310px } в index.css
+const STAMP_BASE_HEIGHT = 127; // баннер 34 + таблица ~93
+
+function escapeXml(s: string): string {
+  return s
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/\"/g, '&quot;')
+    .replace(/'/g, '&#39;');
+}
+
+/** Нативный SVG-фрагмент с красным штампом (встроен в итоговый SVG при экспорте).
+    Повторяет оформление .diagram-stamp из index.css:
+    красный баннер "РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО", строки Разработал / Утвержд / Дата / № проекта,
+    пустые значения — "—", позиционирование в правом нижнем углу с отступом 18px,
+    масштаб ограничен, чтобы не вылезать за границы картинки. */
+function buildStampSvgGroup(
+  width: number,
+  height: number,
+  stamp: { visible: boolean; developer: string; approver: string; date: string },
+  projectNumber: string,
+): string {
+  if (!stamp.visible) return '';
+
+  const pad = 18; // отступ от правого/нижнего края, как в CSS (bottom/right: 18px)
+  // Масштаб: не больше 1x и не больше чем влезет по ширине/высоте с отступами.
+  const scale = Math.min(1, (width - pad * 2) / STAMP_BASE_WIDTH, (height - pad * 2) / STAMP_BASE_HEIGHT);
+  const sw = STAMP_BASE_WIDTH * scale;
+  const sh = STAMP_BASE_HEIGHT * scale;
+  const gx = width - sw - pad;
+  const gy = height - sh - pad;
+
+  const dev = escapeXml(stamp.developer || '—');
+  const apr = escapeXml(stamp.approver || '—');
+  const dat = escapeXml(stamp.date || '—');
+  const prj = escapeXml(projectNumber || '—');
+  const forbidden = escapeXml('РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО');
+
+  const cx = sw / 2;
+  const cy = sh / 2;
+
+  const bannerH = 34 * scale; // высота красного баннера (как на вебе)
+  const rowH = 16 * scale; // шаг строк таблицы (как .diagram-stamp__row padding 2px 0 + font 11px)
+  const tablePadY = 8 * scale; // как .diagram-stamp__table padding 7px 9px 8px
+
+  return [
+    '<g transform="translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ') scale(' + scale.toFixed(4) + ') rotate(-3 ' + cx.toFixed(1) + ' ' + cy.toFixed(1) + ')">',
+    // Светлая подложка коробки (как background: var(--stamp-light))
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="8" ry="8" fill="' + STAMP_LIGHT + '" />',
+    // Красная рамка 2px (как border: 2px solid var(--stamp))
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="8" ry="8" fill="none" stroke="' + STAMP_COLOR + '" stroke-width="2" pointer-events="none" />',
+    // Тень (как box-shadow: var(--shadow-md))
+    '<defs>' +
+    '<filter id="stamp-shadow" x="-20%" y="-20%" width="140%" height="140%">' +
+    '<feGaussianBlur in="SourceAlpha" stdDeviation="3" />' +
+    '<feOffset dx="0" dy="2" result="offsetblur" />' +
+    '<feComponentTransfer><feFuncA type="linear" slope="0.25" /></feComponentTransfer>' +
+    '<feMerge><feMergeNode /><feMergeNode in="SourceGraphic" /></feMerge>' +
+    '</filter>' +
+    '</defs>' +
+    '<g filter="url(#stamp-shadow)">',
+    // Красный баннер сверху со скруглёнными верхними углами
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + bannerH.toFixed(1) + '" rx="8" ry="8" fill="' + STAMP_COLOR + '" />',
+    '<rect x="0" y="' + (bannerH - 8 * scale).toFixed(1) + '" width="' + sw.toFixed(1) + '" height="8" fill="' + STAMP_COLOR + '" />',
+    '<text x="12" y="' + (bannerH * 0.62).toFixed(1) + '" font-family="sans-serif" font-weight="800" font-size="11" fill="#fff" letter-spacing="0.08em" text-anchor="start">' + forbidden + '</text>',
+    // Таблица данных под баннером
+    '<g transform="translate(0,' + bannerH.toFixed(1) + ')">',
+    '<line x1="9" y1="0" x2="' + (sw - 9).toFixed(1) + '" y2="0" stroke="' + STAMP_COLOR + '" stroke-width="1" />',
+    '<text x="9" y="' + (rowH + tablePadY).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="11" fill="' + STAMP_COLOR + '">Разработал:</text>',
+    '<text x="150" y="' + (rowH + tablePadY).toFixed(1) + '" font-family="sans-serif" font-size="11" fill="' + STAMP_COLOR + '" text-anchor="end">' + dev + '</text>',
+    '<text x="9" y="' + (rowH * 2 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="11" fill="' + STAMP_COLOR + '">Утвердил:</text>',
+    '<text x="150" y="' + (rowH * 2 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-size="11" fill="' + STAMP_COLOR + '" text-anchor="end">' + apr + '</text>',
+    '<text x="9" y="' + (rowH * 3 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="11" fill="' + STAMP_COLOR + '">Дата:</text>',
+    '<text x="150" y="' + (rowH * 3 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-size="11" fill="' + STAMP_COLOR + '" text-anchor="end">' + dat + '</text>',
+    '<text x="9" y="' + (rowH * 4 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="11" fill="' + STAMP_COLOR + '">№ проекта:</text>',
+    '<text x="150" y="' + (rowH * 4 + tablePadY).toFixed(1) + '" font-family="sans-serif" font-size="11" fill="' + STAMP_COLOR + '" text-anchor="end">' + prj + '</text>',
+    '</g>',
+    '</g>', // конец filter-группы
+    '</g>',
+  ].join('');
+}
 import type { DeviceData } from './nodes';
 import { OrthoEdge } from './edges';
 import {
@@ -321,7 +409,7 @@ function autoLayout(nodes: Node<DeviceData>[]): Node<DeviceData>[] {
   });
 }
 
-type Tab = 'manage' | 'objects' | 'library' | 'settings';
+type Tab = 'manage' | 'objects' | 'library' | 'settings' | 'catalog';
 
 export default function App() {
   const [nodes, setNodes, onNodesChange] = useNodesState<Node<DeviceData>>([]);
@@ -402,6 +490,21 @@ export default function App() {
       .catch(() => setKcEnabled(false));
   }, [setNodes]);
 
+  const loadCatalogProject = async (id: number) => {
+    try {
+      const project = await getCatalogProject(id);
+      setNodes(toRfNodes(project.nodes));
+      setConnections(project.connections);
+      setProjectId(project.id);
+      setProjectName(project.name);
+      setProjectOwner(project.owner);
+      setPathResult(null);
+      setStatus('Проект из каталога открыт: ' + project.name);
+    } catch (e) {
+      setStatus((e as Error).message);
+    }
+  };
+
   const [eType, setEType] = useState<string>('server');
   const [eName, setEName] = useState('');
   const [eParent, setEParent] = useState('');
@@ -428,6 +531,35 @@ export default function App() {
   const [boundary, setBoundary] = useState<{ x: number; y: number; w: number; h: number } | null>(null);
   const reactFlowWrapper = useRef<HTMLDivElement>(null);
   const [viewport, setViewport] = useState<Viewport>({ x: 0, y: 0, zoom: 1 });
+
+  // --- Diagram stamp (red "editing prohibited" stamp) ---
+  interface StampState {
+    visible: boolean;
+    developer: string;
+    approver: string;
+    date: string;
+  }
+  const loadStoredStamp = (): StampState => {
+    try {
+      const raw = localStorage.getItem('vsdoox.stamp');
+      if (raw) {
+        const parsed = JSON.parse(raw) as Partial<StampState>;
+        return {
+          visible: parsed.visible !== false,
+          developer: typeof parsed.developer === 'string' ? parsed.developer : '',
+          approver: typeof parsed.approver === 'string' ? parsed.approver : '',
+          date: typeof parsed.date === 'string' ? parsed.date : '',
+        };
+      }
+    } catch {}
+    return { visible: true, developer: '', approver: '', date: '' };
+  };
+  const [stamp, setStamp] = useState<StampState>(loadStoredStamp);
+  useEffect(() => {
+    localStorage.setItem('vsdoox.stamp', JSON.stringify(stamp));
+  }, [stamp]);
+  // Номер проекта берётся из названия схемы
+  const projectNumber = projectName.trim() || '—';
 
   const displayNodes = useMemo(() => applySizes(nodes), [nodes]);
 
@@ -826,34 +958,76 @@ export default function App() {
         return;
       }
 
+      const rect = wrapper.getBoundingClientRect();
+
+      // Участок схемы для экспорта. Если задана граница — экспортируем в рамках
+      // её контура (в flow-координатах), иначе — всю видимую область.
+      let crop: { x: number; y: number; width: number; height: number };
+      if (boundary) {
+        const zoom = viewport.zoom;
+        crop = {
+          x: viewport.x + boundary.x * zoom,
+          y: viewport.y + boundary.y * zoom,
+          width: boundary.w * zoom,
+          height: boundary.h * zoom,
+        };
+        // Ограничиваем видимой областью канвы (не выходим за её размеры)
+        crop.x = Math.max(0, Math.min(crop.x, rect.width));
+        crop.y = Math.max(0, Math.min(crop.y, rect.height));
+        crop.width = Math.min(crop.width, rect.width - crop.x);
+        crop.height = Math.min(crop.height, rect.height - crop.y);
+      } else {
+        crop = { x: 0, y: 0, width: rect.width, height: rect.height };
+      }
+
+      const computed = getComputedStyle(document.documentElement);
+      const surfaceColor = computed.getPropertyValue('--surface').trim() || '#ffffff';
+
       const svg = await toSvg(canvas as HTMLElement, {
-        backgroundColor: 'var(--surface)',
+        backgroundColor: surfaceColor,
+        width: crop.width,
+        height: crop.height,
+        style: { transform: `translate(${-crop.x}px, ${-crop.y}px)` },
         filter: (node) => {
-          // Exclude controls, minimap, and boundary handles
-          if (node instanceof Element) {
-            const className = node.className as string;
-            if (className.includes('react-flow__controls') ||
-                className.includes('react-flow__minimap') ||
-                className.includes('boundary-handle') ||
-                className.includes('diagram-boundary')) {
-              return false;
-            }
+          // Exclude controls, minimap, and boundary frame/handles
+          if (!(node instanceof Element)) return true;
+          const className = node.getAttribute('class') ?? '';
+          if (className.includes('react-flow__controls') ||
+              className.includes('react-flow__minimap') ||
+              className.includes('boundary-handle') ||
+              className.includes('diagram-boundary')) {
+            return false;
           }
           return true;
         },
       });
-      const blob = new Blob([svg], { type: 'image/svg+xml' });
-      const url = URL.createObjectURL(blob);
+
+      // Встраиваем красный штамп в итоговый SVG, если он включен.
+      const SVG_DATA_URI_PREFIX = 'data:image/svg+xml;charset=utf-8,';
+      let svgDataUri = svg;
+      if (stamp.visible && svgDataUri.startsWith(SVG_DATA_URI_PREFIX)) {
+        const decoded = decodeURIComponent(svgDataUri.slice(SVG_DATA_URI_PREFIX.length));
+        const stampGroup = buildStampSvgGroup(crop.width, crop.height, stamp, projectNumber);
+        if (stampGroup) {
+          const lastClose = decoded.lastIndexOf('</svg>');
+          if (lastClose >= 0) {
+            const modified = decoded.slice(0, lastClose) + stampGroup + decoded.slice(lastClose);
+            svgDataUri = SVG_DATA_URI_PREFIX + encodeURIComponent(modified);
+          }
+        }
+      }
+
       const a = document.createElement('a');
-      a.href = url;
+      a.href = svgDataUri;
       a.download = (projectName || 'Схема') + '.svg';
+      document.body.appendChild(a);
       a.click();
-      URL.revokeObjectURL(url);
+      document.body.removeChild(a);
       setStatus('Схема экспортирована в SVG');
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [projectName]);
+  }, [projectName, boundary, viewport, stamp]);
 
   const handleBoundaryMouseDown = useCallback((e: React.MouseEvent, handle: string) => {
     e.stopPropagation();
@@ -1064,7 +1238,12 @@ export default function App() {
   return (
     <div className="app">
       <div className="top-actions">
-        <button className="admin-btn" onClick={() => window.open('/catalog', '_blank')} title="Каталог проектов">каталог</button>
+        <button className="admin-btn" onClick={() => setTab(tab === 'catalog' ? 'manage' : 'catalog')} title="Каталог проектов">
+          {tab === 'catalog' ? 'каталог ✕' : 'каталог'}
+        </button>
+        <button className="admin-btn" onClick={() => setTab(tab === 'settings' ? 'manage' : 'settings')} title={tab === 'settings' ? 'Закрыть настройки' : 'Настройки'}>
+          {tab === 'settings' ? 'настройки ✕' : 'настройки'}
+        </button>
         <button className="admin-btn" onClick={() => window.open('/admin', '_blank')} title="Администрирование">admin</button>
         <button className="logout-btn" onClick={handleLogout} title="Выйти">Выход</button>
       </div>
@@ -1077,7 +1256,6 @@ export default function App() {
           <button className={'tab' + (tab === 'manage' ? ' active' : '')} onClick={() => setTab('manage')}>Управление</button>
           <button className={'tab' + (tab === 'objects' ? ' active' : '')} onClick={() => setTab('objects')}>Объекты</button>
           <button className={'tab' + (tab === 'library' ? ' active' : '')} onClick={() => setTab('library')}>Библиотека</button>
-          <button className={'tab' + (tab === 'settings' ? ' active' : '')} onClick={() => setTab('settings')}>Настройки</button>
         </div>
 
         {tab === 'manage' && (
@@ -1093,10 +1271,6 @@ export default function App() {
                 {projectOwner != null && projectOwner !== owner ? 'Сохранить копию' : 'Сохранить'}
               </button>
             </div>
-            <button onClick={handleExport}>Скачать .vsdx</button>
-            <button onClick={handleExportSVG}>Экспорт SVG</button>
-            <button onClick={() => setShowConnTable(true)}>Таблица протоколов/портов</button>
-
             <section>
               <label>Мои проекты</label>
               <button onClick={refreshProjects}>Обновить список</button>
@@ -1110,24 +1284,6 @@ export default function App() {
                   </li>
                 ))}
               </ul>
-            </section>
-
-            <section>
-              <label>Объекты на схеме</label>
-              {nodes.length === 0 ? (
-                <div className="muted">Объектов пока нет</div>
-              ) : (
-                <ul className="projects">
-                  {nodes.map((n) => (
-                    <li key={n.id}>
-                      <button className="link" onClick={() => openEdit(n.id)}>
-                        {n.data.name} <span className="conn-meta">{typeName(n.type ?? '')}</span>
-                      </button>
-                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
-                    </li>
-                  ))}
-                </ul>
-              )}
             </section>
 
             <section>
@@ -1214,7 +1370,7 @@ export default function App() {
             </section>
 
             <section>
-              <label>Объекты</label>
+              <label>Объекты на схеме</label>
               {nodes.length === 0 ? (
                 <div className="muted">Объектов пока нет</div>
               ) : (
@@ -1224,6 +1380,7 @@ export default function App() {
                       <button className="link" onClick={() => openEdit(n.id)}>
                         {n.data.name} <span className="conn-meta">{typeName(n.type ?? '')}</span>
                       </button>
+                      <button className="del" onClick={() => deleteNode(n.id)}>✕</button>
                     </li>
                   ))}
                 </ul>
@@ -1291,43 +1448,7 @@ export default function App() {
           </>
         )}
 
-        {tab === 'settings' && (
-          <>
-            <section>
-              <label>Тема</label>
-              <div className="row">
-                <button className={theme === 'light' ? 'primary' : ''} onClick={() => setTheme('light')}>Светлая</button>
-                <button className={theme === 'dark' ? 'primary' : ''} onClick={() => setTheme('dark')}>Тёмная</button>
-              </div>
-            </section>
 
-            <section>
-              <label>Раскладка</label>
-              <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
-            </section>
-
-            <section>
-              <label>Типы объектов</label>
-              <div className="row">
-                <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="Новый тип" />
-                <button className="primary" onClick={handleAddCustomType}>Добавить</button>
-              </div>
-              <ul className="projects">
-                {customTypes.map((t) => (
-                  <li key={t.id}>
-                    <span className="link">{t.name}</span>
-                    <button className="del" onClick={() => handleDeleteCustomType(t.id)}>✕</button>
-                  </li>
-                ))}
-              </ul>
-            </section>
-
-            <section>
-              <label>Сессия</label>
-              <button onClick={handleLogout}>Выйти</button>
-            </section>
-          </>
-        )}
 
         {pathResult && (
           <section className="path-result">
@@ -1404,8 +1525,148 @@ export default function App() {
               + Добавить границу схемы
             </button>
           )}
+
+          {/* Diagram stamp (overlay, fixed in screen space, not transformed by React Flow) */}
+          {stamp.visible && (
+            <div
+              className="diagram-stamp"
+              data-visible={stamp.visible ? 'true' : 'false'}
+            >
+              <div className="diagram-stamp__forbidden">
+                РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО
+              </div>
+              <div className="diagram-stamp__table">
+                <div className="diagram-stamp__row">
+                  <span className="diagram-stamp__label">Разработал:</span>
+                  <span className="diagram-stamp__value">
+                    {stamp.developer || <span className="diagram-stamp__empty">—</span>}
+                  </span>
+                </div>
+                <div className="diagram-stamp__row">
+                  <span className="diagram-stamp__label">Утвердил:</span>
+                  <span className="diagram-stamp__value">
+                    {stamp.approver || <span className="diagram-stamp__empty">—</span>}
+                  </span>
+                </div>
+                <div className="diagram-stamp__row">
+                  <span className="diagram-stamp__label">Дата:</span>
+                  <span className="diagram-stamp__value">
+                    {stamp.date || <span className="diagram-stamp__empty">—</span>}
+                  </span>
+                </div>
+                <div className="diagram-stamp__row">
+                  <span className="diagram-stamp__label">№ проекта:</span>
+                  <span className="diagram-stamp__value">{projectNumber}</span>
+                </div>
+              </div>
+            </div>
+          )}
+
+          {/* Настройки — оверлей поверх холста */}
+          {tab === 'settings' && (
+            <div className="settings-overlay" onClick={() => setTab('manage')}>
+              <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+                <div className="settings-header">
+                  <h2>Настройки</h2>
+                  <button className="settings-close" onClick={() => setTab('manage')}>✕</button>
+                </div>
+
+                <div className="settings-grid">
+                  <div className="settings-card">
+                    <h3>Оформление</h3>
+                    <div className="row">
+                      <button className={theme === 'light' ? 'primary' : ''} onClick={() => setTheme('light')}>
+                        Светлая
+                      </button>
+                      <button className={theme === 'dark' ? 'primary' : ''} onClick={() => setTheme('dark')}>
+                        Тёмная
+                      </button>
+                    </div>
+                  </div>
+
+                  <div className="settings-card">
+                    <h3>Схема</h3>
+                    <button onClick={() => setNodes(autoLayout(nodes))}>Авто-раскладка</button>
+                  </div>
+
+                  <div className="settings-card">
+                    <h3>Объекты</h3>
+                    <div className="row">
+                      <input value={newTypeName} onChange={(e) => setNewTypeName(e.target.value)} placeholder="Новый тип" />
+                      <button className="primary" onClick={handleAddCustomType}>Добавить</button>
+                    </div>
+                    <ul className="projects">
+                      {customTypes.map((t) => (
+                        <li key={t.id}>
+                          <span className="link">{t.name}</span>
+                          <button className="del" onClick={() => handleDeleteCustomType(t.id)}>✕</button>
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+
+                  <div className="settings-card">
+                    <h3>Экспорт</h3>
+                    <button onClick={handleExport}>Скачать .vsdx</button>
+                    <button onClick={handleExportSVG}>Экспорт SVG</button>
+                    <button onClick={() => setShowConnTable(true)}>Таблица протоколов/портов</button>
+                  </div>
+
+                  <div className="settings-card settings-card--stamp">
+                    <h3>Штамп схемы</h3>
+                    <button
+                      className={stamp.visible ? 'primary' : ''}
+                      onClick={() => setStamp((s) => ({ ...s, visible: !s.visible }))}
+                    >
+                      {stamp.visible ? 'вкл.' : 'выкл.'}
+                    </button>
+                    <div className="row">
+                      <input
+                        value={stamp.developer}
+                        onChange={(e) => setStamp((s) => ({ ...s, developer: e.target.value }))}
+                        placeholder="ФИО разработчика"
+                      />
+                      <input
+                        value={stamp.approver}
+                        onChange={(e) => setStamp((s) => ({ ...s, approver: e.target.value }))}
+                        placeholder="ФИО утверждающего"
+                      />
+                    </div>
+                    <div className="row">
+                      <input
+                        type="date"
+                        value={stamp.date}
+                        onChange={(e) => setStamp((s) => ({ ...s, date: e.target.value }))}
+                      />
+                    </div>
+                    <div className="muted">
+                      № проекта (из названия схемы): {projectNumber}
+                    </div>
+                  </div>
+
+                  <div className="settings-card settings-card--session">
+                    <h3>Сессия</h3>
+                    <button onClick={handleLogout}>Выйти</button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       </main>
+
+      {/* Каталог — модальное окно поверх холста (по образу настроек) */}
+      {tab === 'catalog' && (
+        <div className="settings-overlay" onClick={() => setTab('manage')}>
+          <div className="settings-panel" onClick={(e) => e.stopPropagation()}>
+            <div className="settings-header">
+              <h2>Каталог проектов</h2>
+              <button className="settings-close" onClick={() => setTab('manage')}>✕</button>
+            </div>
+            <Catalog embedded onOpen={loadCatalogProject} />
+          </div>
+        </div>
+      )}
 
       {editingNode && editingType && (
         <div className="modal-backdrop" onClick={handleEditCancel}>
@@ -1489,3 +1750,6 @@ export default function App() {
     </div>
   );
 }
+
+// Build marker: verifies App.tsx is included in the frontend bundle.
+export const APP_BUILD_MARKER = 'app_build_marker_20261018_v2';

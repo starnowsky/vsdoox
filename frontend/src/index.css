@@ -281,6 +281,98 @@ button.del:hover { background: var(--surface-2); }
   z-index: 1000;
 }
 
+/* ---------- Настройки — оверлей поверх холста ---------- */
+.settings-overlay {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: rgba(0, 0, 0, 0.25);
+  backdrop-filter: blur(2px);
+  z-index: 30;
+  padding: 24px;
+  box-sizing: border-box;
+}
+
+.settings-panel {
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 22px;
+  width: min(860px, 92vw);
+  max-height: 92vh;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  box-shadow: var(--shadow-lg);
+}
+
+.settings-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.settings-header h2 {
+  margin: 0;
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text);
+}
+
+.settings-close {
+  background: transparent;
+  border: 1px solid var(--border);
+  color: var(--text-muted);
+  font-size: 18px;
+  line-height: 1;
+  padding: 2px 8px;
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+}
+
+.settings-close:hover {
+  color: var(--text);
+  border-color: var(--border-strong);
+}
+
+.settings-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.settings-card {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 14px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.settings-card h3 {
+  margin: 0 0 6px 0;
+  font-size: 14px;
+  font-weight: 600;
+  color: var(--text);
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+
+.settings-card button {
+  width: auto;
+}
+
+.settings-card .muted {
+  font-size: 11px;
+  color: var(--text-muted);
+}
+
 .modal {
   background: var(--surface);
   border: 1px solid var(--border);
@@ -319,12 +411,12 @@ button.del:hover { background: var(--surface-2); }
   height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 2px;
   border-radius: 10px;
   padding: 8px 10px;
-  text-align: center;
+  text-align: left;
   font-size: 13px;
   background: var(--node-bg);
   border: 1px solid var(--node-border);
@@ -427,7 +519,7 @@ button.del:hover { background: var(--surface-2); }
   display: flex;
   align-items: center;
   font-weight: 700;
-  font-size: 14px;
+  font-size: 12px;
   background: var(--surface-2);
   border-bottom: 1px solid var(--border);
   color: var(--text);
@@ -449,7 +541,7 @@ button.del:hover { background: var(--surface-2); }
   display: flex;
   align-items: center;
   font-weight: 600;
-  font-size: 12px;
+  font-size: 10px;
   color: var(--text);
   background: var(--surface);
   border-bottom: 1px solid var(--border);
@@ -460,8 +552,8 @@ button.del:hover { background: var(--surface-2); }
   height: 100%;
   display: flex;
   flex-direction: column;
-  align-items: center;
-  justify-content: center;
+  align-items: flex-start;
+  justify-content: flex-start;
   gap: 2px;
 }
 
@@ -952,6 +1044,9 @@ button.del:hover { background: var(--surface-2); }
 .catalog-detail h2 { font-size: 18px; font-weight: 700; margin-bottom: 8px; }
 .catalog-detail .catalog-meta { line-height: 1.7; margin-bottom: 14px; }
 
+/* каталог внутри модального окна: реестр компактнее */
+.settings-panel .catalog-registry { max-height: 62vh; }
+
 /* ---------- Top Actions - Logout Button ---------- */
 .logout-btn {
   padding: 7px 14px;
@@ -1063,6 +1158,17 @@ button.del:hover { background: var(--surface-2); }
 .add-boundary-btn:hover {
   background: var(--accent-hover);
   transform: translateY(-1px);
+}
+
+/* ---------- Скрытые элементы (по требованию) ---------- */
+/* «Мои проекты» — секция со списком проектов в сайдбаре */
+.sidebar section:has(> .projects) {
+  display: none;
+}
+
+/* Штамп схемы — красный оверлей на холсте */
+.diagram-stamp {
+  display: none;
 }
 
 /* ---------- Canvas full height ---------- */

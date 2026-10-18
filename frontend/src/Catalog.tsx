@@ -2,6 +2,13 @@ import { useEffect, useMemo, useState } from 'react';
 import { catalogProjects, deleteCatalogProject, downloadConnectionsXlsx } from './api';
 import type { CatalogFolder, CatalogProject } from './api';
 
+interface CatalogProps {
+  /** Режим встраивания в модалку (без обёртки admin-page и шапки) */
+  embedded?: boolean;
+  /** Обработчик открытия схемы из модального окна (загружает в текущее окно) */
+  onOpen?: (id: number) => void;
+}
+
 function fmtDate(iso?: string): string {
   if (!iso) return '';
   const d = new Date(iso);
@@ -18,7 +25,7 @@ function downloadBlob(blob: Blob, name: string) {
   URL.revokeObjectURL(url);
 }
 
-export default function Catalog() {
+export default function Catalog({ embedded = false, onOpen }: CatalogProps) {
   const [folders, setFolders] = useState<CatalogFolder[]>([]);
   const [viewer, setViewer] = useState('');
   const [isAdmin, setIsAdmin] = useState(false);
@@ -58,6 +65,10 @@ export default function Catalog() {
   }, [folders, search]);
 
   const openProject = (id: number) => {
+    if (onOpen) {
+      onOpen(id);
+      return;
+    }
     window.location.href = '/?project=' + id;
   };
 
@@ -83,13 +94,15 @@ export default function Catalog() {
 
   return (
     <div className="admin-page">
-      <div className="admin-header">
-        <img className="page-banner" src="/vibelogo.jpg" alt="VibeDraw" />
-        <div className="admin-header-actions">
-          {viewer && <span className="muted">{viewer}</span>}
-          <a href="/" className="link">← к схеме</a>
+      {!embedded && (
+        <div className="admin-header">
+          <img className="page-banner" src="/vibelogo.jpg" alt="VibeDraw" />
+          <div className="admin-header-actions">
+            {viewer && <span className="muted">{viewer}</span>}
+            <a href="/" className="link">← к схеме</a>
+          </div>
         </div>
-      </div>
+      )}
 
       {error && <div className="error">{error}</div>}
 

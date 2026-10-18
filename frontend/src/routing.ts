@@ -302,25 +302,33 @@ export function routeConnections(
     return { sourceSide, targetSide };
   });
 
-  // --- 2. Group by (node, side) so left/right lines of one node distribute independently ---
-  const sourceGroups = new Map<string, number[]>();
-  const targetGroups = new Map<string, number[]>();
+  // --- 2. Group by (node, side), merging source and target ends together.
+  // This makes a line A→B and the reverse line B→A share the same side-group
+  // on each node, so their connection points spread vertically instead of
+  // collapsing onto the centre point of the side.
+  interface EndpointRef {
+    itemIndex: number;
+    end: 'source' | 'target';
+    sortKey: number; // y of the opposite end — spatial order for deterministic lanes
+  }
 
+  const sideGroups = new Map<string, EndpointRef[]>();
   items.forEach((it, i) => {
     const sKey = `${it.sourceId}:${endpointSides[i].sourceSide}`;
     const tKey = `${it.targetId}:${endpointSides[i].targetSide}`;
-    if (!sourceGroups.has(sKey)) sourceGroups.set(sKey, []);
-    if (!targetGroups.has(tKey)) targetGroups.set(tKey, []);
-    sourceGroups.get(sKey)!.push(i);
-    targetGroups.get(tKey)!.push(i);
+    if (!sideGroups.has(sKey)) sideGroups.set(sKey, []);
+    if (!sideGroups.has(tKey)) sideGroups.set(tKey, []);
+    sideGroups.get(sKey)!.push({ itemIndex: i, end: 'source', sortKey: it.target.y });
+    sideGroups.get(tKey)!.push({ itemIndex: i, end: 'target', sortKey: it.source.y });
   });
 
-  // Sort each group by target/source position for deterministic ordering
-  for (const [, group] of sourceGroups) {
-    group.sort((a, b) => items[a].target.y - items[b].target.y);
-  }
-  for (const [, group] of targetGroups) {
-    group.sort((a, b) => items[a].source.y - items[b].source.y);
+  // Deterministic ordering: spatial (by opposite end) + tie-break by item index.
+  const distIndex = new Map<string, { count: number; index: number }>();
+  for (const refs of sideGroups.values()) {
+    refs.sort((a, b) => a.sortKey - b.sortKey || a.itemIndex - b.itemIndex);
+    refs.forEach((ref, j) => {
+      distIndex.set(`${ref.itemIndex}:${ref.end}`, { count: refs.length, index: j });
+    });
   }
 
   // Apply tangential distribution to source/target points
@@ -335,20 +343,18 @@ export function routeConnections(
     let newTargetSide = it.targetSide as Side;
 
     if (sourceNode) {
-      const sourceGroup = sourceGroups.get(`${it.sourceId}:${sourceSide}`) ?? [];
-      const sourceIndex = sourceGroup.indexOf(i);
-      if (sourceIndex >= 0) {
-        const distributed = getDistributedPoint(sourceNode, sourceSide, sourceGroup.length, sourceIndex);
+      const info = distIndex.get(`${i}:source`);
+      if (info) {
+        const distributed = getDistributedPoint(sourceNode, sourceSide, info.count, info.index);
         newSource = { x: distributed.x, y: distributed.y };
         newSourceSide = sourceSide;
       }
     }
 
     if (targetNode) {
-      const targetGroup = targetGroups.get(`${it.targetId}:${targetSide}`) ?? [];
-      const targetIndex = targetGroup.indexOf(i);
-      if (targetIndex >= 0) {
-        const distributed = getDistributedPoint(targetNode, targetSide, targetGroup.length, targetIndex);
+      const info = distIndex.get(`${i}:target`);
+      if (info) {
+        const distributed = getDistributedPoint(targetNode, targetSide, info.count, info.index);
         newTarget = { x: distributed.x, y: distributed.y };
         newTargetSide = targetSide;
       }
@@ -370,9 +376,23 @@ export function routeConnections(
     });
   });
   const laneMap = new Map<string, number>();
+  // Перпендикулярная координата «коридора» линии — ось, по которой
+  // разводятся лейны у МСЭ. Горизонтальный проход → середина по Y,
+  // вертикальный проход → середина по X.
+  const corridorKey = (it: RouteItem): number =>
+    it.horizontalPass ? (it.source.y + it.target.y) / 2 : (it.source.x + it.target.x) / 2;
+
   for (const [fwId, lines] of fwGroups) {
-    const n = lines.length;
-    lines.forEach((lineIdx, j) => {
+    // Линии по одному маршруту (через один и тот же МСЭ) должны получать
+    // лейны в пространственном порядке, а не в порядке вставки в массив
+    // connections — иначе при «обратном» порядке добавления связей линии
+    // сходятся и пересекаются. Тай-брейк по индексу делает порядок детерминированным.
+    const sorted = [...lines].sort(
+      (a, b) =>
+        corridorKey(distributedItems[a]) - corridorKey(distributedItems[b]) || a - b
+    );
+    const n = sorted.length;
+    sorted.forEach((lineIdx, j) => {
       laneMap.set(`${lineIdx}:${fwId}`, (j - (n - 1) / 2) * GAP);
     });
   }
@@ -453,4 +473,7 @@ export const ROUTING_SYMBOLS = {
   MIN_CONN_DIST,
   MAX_CONN_DIST,
 } as const;
+
+// Build marker: verifies this module is included in the frontend bundle.
+export const ROUTING_BUILD_MARKER = 'routing_build_marker_20261018_v2';
 
