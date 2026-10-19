@@ -192,7 +192,7 @@ const CONN_COLORS = [
 ];
 const DEFAULT_CONN_COLOR = CONN_COLORS[0];
 
-const DC_W = 340;
+const DC_W = 395;
 const DC_HEADER = 46;
 const DC_PAD = 14;
 const NW_HEADER = 30;
@@ -1540,6 +1540,58 @@ export default function App() {
             <Controls />
             <MiniMap />
           </ReactFlow>
+
+          {/* Diagram Legend (overlay, fixed in screen space, bottom-left). Shown only when there are connections. */}
+          {connections.length > 0 && (
+            <div className="diagram-legend">
+              <div className="diagram-legend__title">Легенда</div>
+              <table className="diagram-legend__table">
+                <thead>
+                  <tr>
+                    <th className="diagram-legend__cell diagram-legend__cell--swatch">Стрелка</th>
+                    <th className="diagram-legend__cell diagram-legend__cell--proto">Протокол/порт</th>
+                    <th className="diagram-legend__cell diagram-legend__cell--desc">Описание</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {connections.map((c) => {
+                    const color = connColor(c);
+                    const proto = (c.protocol ?? 'any').toUpperCase() + (c.port ? '\\' + c.port : '');
+                    return (
+                      <tr key={c.id} className="diagram-legend__row">
+                        <td className="diagram-legend__cell diagram-legend__cell--swatch">
+                          <div className="diagram-legend__swatch">
+                            <svg width="20" height="14" viewBox="0 0 20 14" role="img" aria-label={color}>
+                              <line x1="4" y1="7" x2="18" y2="7" stroke={color} strokeWidth="3" />
+                              <marker markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto-start-reverse">
+                                <polygon points="0,0 10,5 0,10" fill={color} />
+                              </marker>
+                            </svg>
+                          </div>
+                        </td>
+                        <td className="diagram-legend__cell diagram-legend__cell--proto">
+                          {proto}
+                        </td>
+                        <td className="diagram-legend__cell diagram-legend__cell--desc">
+                          <input
+                            className="diagram-legend__input"
+                            value={c.description ?? ''}
+                            onChange={(e) => {
+                              const val = e.target.value.trim();
+                              setConnections((cs) =>
+                                cs.map((x) => (x.id === c.id ? { ...x, description: val || undefined } : x))
+                              );
+                            }}
+                            placeholder="—"
+                          />
+                        </td>
+                      </tr>
+                    );
+                  })}
+                </tbody>
+              </table>
+            </div>
+          )}
 
           {/* Diagram Boundary Frame */}
           {boundary && (
