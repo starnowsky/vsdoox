@@ -12,6 +12,9 @@ const STAMP_LIGHT = 'rgba(211,47,47,0.18)'; // var(--stamp-light)
 const STAMP_BASE_WIDTH = 310; // совпадает с .diagram-stamp { width: 310px } в index.css
 const STAMP_BASE_HEIGHT = 127; // баннер 34 + таблица ~93
 
+// Состояние показа аннотаций (штамп + легенда) хранится отдельно от contenта штампа.
+const ANNOTATIONS_STORAGE_KEY = 'vsdoox.annotations.visible';
+
 function escapeXml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -24,23 +27,18 @@ function escapeXml(s: string): string {
 /** Нативный SVG-фрагмент с красным штампом (встроен в итоговый SVG при экспорте).
     Повторяет оформление .diagram-stamp из index.css:
     красный баннер "РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО", строки Разработал / Утвержд / Дата / № проекта,
-    пустые значения — "—", позиционирование в правом нижнем углу с отступом 18px,
-    масштаб ограничен, чтобы не вылезать за границы картинки. */
+    пустые значения — "—". Рендерится в натуральном размере (1:1) в точке (x, y) —
+    координаты экранного оверлея, без поворота и без подгонки под размер картинки. */
 function buildStampSvgGroup(
-  width: number,
-  height: number,
-  stamp: { visible: boolean; developer: string; approver: string; date: string },
+  x: number,
+  y: number,
+  stamp: { developer: string; approver: string; date: string },
   projectNumber: string,
 ): string {
-  if (!stamp.visible) return '';
-
-  const pad = 18; // отступ от правого/нижнего края, как в CSS (bottom/right: 18px)
-  // Масштаб: не больше 1x и не больше чем влезет по ширине/высоте с отступами.
-  const scale = Math.min(1, (width - pad * 2) / STAMP_BASE_WIDTH, (height - pad * 2) / STAMP_BASE_HEIGHT);
-  const sw = STAMP_BASE_WIDTH * scale;
-  const sh = STAMP_BASE_HEIGHT * scale;
-  const gx = width - sw - pad;
-  const gy = height - sh - pad;
+  const sw = STAMP_BASE_WIDTH;
+  const sh = STAMP_BASE_HEIGHT;
+  const gx = x;
+  const gy = y;
 
   const dev = escapeXml(stamp.developer || '—');
   const apr = escapeXml(stamp.approver || '—');
@@ -48,15 +46,12 @@ function buildStampSvgGroup(
   const prj = escapeXml(projectNumber || '—');
   const forbidden = escapeXml('РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО');
 
-  const cx = sw / 2;
-  const cy = sh / 2;
-
-  const bannerH = 34 * scale; // высота красного баннера (как на вебе)
-  const rowH = 16 * scale; // шаг строк таблицы (как .diagram-stamp__row padding 2px 0 + font 11px)
-  const tablePadY = 8 * scale; // как .diagram-stamp__table padding 7px 9px 8px
+  const bannerH = 34;
+  const rowH = 16;
+  const tablePadY = 8;
 
   return [
-    '<g transform="translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ') scale(' + scale.toFixed(4) + ') rotate(-3 ' + cx.toFixed(1) + ' ' + cy.toFixed(1) + ')">',
+    '<g transform="translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ')">',
     // Светлая подложка коробки (как background: var(--stamp-light))
     '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="8" ry="8" fill="' + STAMP_LIGHT + '" />',
     // Красная рамка 2px (как border: 2px solid var(--stamp))
@@ -73,7 +68,7 @@ function buildStampSvgGroup(
     '<g filter="url(#stamp-shadow)">',
     // Красный баннер сверху со скруглёнными верхними углами
     '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + bannerH.toFixed(1) + '" rx="8" ry="8" fill="' + STAMP_COLOR + '" />',
-    '<rect x="0" y="' + (bannerH - 8 * scale).toFixed(1) + '" width="' + sw.toFixed(1) + '" height="8" fill="' + STAMP_COLOR + '" />',
+    '<rect x="0" y="' + (bannerH - 8).toFixed(1) + '" width="' + sw.toFixed(1) + '" height="8" fill="' + STAMP_COLOR + '" />',
     '<text x="12" y="' + (bannerH * 0.62).toFixed(1) + '" font-family="sans-serif" font-weight="800" font-size="11" fill="#fff" letter-spacing="0.08em" text-anchor="start">' + forbidden + '</text>',
     // Таблица данных под баннером
     '<g transform="translate(0,' + bannerH.toFixed(1) + ')">',
@@ -99,14 +94,14 @@ import type { DeviceData } from './nodes';
     блок в левом нижнем углу с отступом 18px, строка на каждую связь:
     цветная стрелка, Протокол/порт, Описание. */
 function buildLegendSvgGroup(
-  width: number,
-  height: number,
+  x: number,
+  y: number,
   connections: Interaction[],
   palette: { surface: string; border: string; text: string; muted: string },
 ): string {
   if (!connections.length) return '';
 
-  const pad = 18; // отступ от левого/нижнего края, как в CSS (left/bottom: 18px)
+  const pad = 18; // отступ от левого/нижнего края
   const rowH = 16; // шаг строки таблицы
   const colSwatch = 56; // ширина колонки «Стрелка»
   const colProto = 120; // ширина колонки «Протокол/порт»
@@ -114,18 +109,16 @@ function buildLegendSvgGroup(
   const thH = 18; // высота шапки таблицы
   const padY = 8; // внутренний отступ по Y
 
-  // Считаем высоту блока и масштабируем, чтобы влезло по ширине/высоте с отступами.
   const baseW = Math.max(colSwatch + colProto + 120, 300);
   const baseH = titleH + padY + thH + rowH * connections.length + padY + 6;
-  const scale = Math.min(1, (width - pad * 2) / baseW, (height - pad * 2) / baseH);
-  const sw = baseW * scale;
-  const sh = baseH * scale;
-  const gx = pad;
-  const gy = height - sh - pad;
+  const sw = baseW;
+  const sh = baseH;
+  const gx = x;
+  const gy = y;
 
-  const sR = 8 * scale; // радиус скругления
-  const fontSize = Math.max(9, Math.round(12 * scale));
-  const sStrokeMuted = Math.max(0.5, Math.round(1 * scale));
+  const sR = 8; // радиус скругления
+  const fontSize = 12;
+  const sStrokeMuted = 1;
 
   const gxT = gx + sR;
   const gyT = gy + sR;
@@ -135,15 +128,15 @@ function buildLegendSvgGroup(
     const color = connColor(c);
     const proto = (c.protocol ?? 'any').toUpperCase() + (c.port ? '\\' + c.port : '');
     const desc = escapeXml(c.description ?? '');
-    const y = gyT + titleH + padY + thH + i * rowH + rowH / 2 + 2;
+    const yy = gyT + titleH + padY + thH + i * rowH + rowH / 2 + 2;
     return [
-      '<g transform="translate(' + gxT.toFixed(1) + ',' + gyT.toFixed(1) + ') scale(' + scale.toFixed(4) + ')">',
+      '<g transform="translate(' + gxT.toFixed(1) + ',' + gyT.toFixed(1) + ')">',
       // Стрелка (цветная линия + треугольник)
       '<line x1="0" y1="' + (i * rowH + rowH / 2 - 2).toFixed(1) + '" x2="34" y2="' + (i * rowH + rowH / 2 - 2).toFixed(1) + '" stroke="' + color + '" stroke-width="3" />',
       '<polygon points="34,' + (i * rowH + rowH / 2 - 6).toFixed(1) + ' 44,' + (i * rowH + rowH / 2 - 2).toFixed(1) + ' 34,' + (i * rowH + rowH / 2 + 2).toFixed(1) + '" fill="' + color + '" />',
       '</g>',
-      '<text x="' + (gxT + colSwatch * scale + 8 * scale).toFixed(1) + '" y="' + y.toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + escapeXml(proto) + '</text>',
-      '<text x="' + (gxT + colSwatch * scale + colProto * scale + 8 * scale).toFixed(1) + '" y="' + y.toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.muted + '">' + (desc || '—') + '</text>',
+      '<text x="' + (gxT + colSwatch + 8).toFixed(1) + '" y="' + yy.toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + escapeXml(proto) + '</text>',
+      '<text x="' + (gxT + colSwatch + colProto + 8).toFixed(1) + '" y="' + yy.toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.muted + '">' + (desc || '—') + '</text>',
     ].join('');
   }).join('');
 
@@ -152,20 +145,20 @@ function buildLegendSvgGroup(
   const hDesc = escapeXml('Описание');
 
   return [
-    '<g transform="translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ') scale(' + scale.toFixed(4) + ') rotate(-3 ' + (sw / 2).toFixed(1) + ' ' + (sh / 2).toFixed(1) + ')">',
+    '<g transform=' + '"' + 'translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ')' + '"' + '>' ,
     // Подложка блока (как background: var(--surface))
     '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="' + palette.surface + '" />',
     // Рамка (как border: 1px solid var(--border))
     '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="none" stroke="' + palette.border + '" stroke-width="' + sStrokeMuted.toFixed(1) + '" pointer-events="none" />',
     // Заголовок
-    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + (titleH * scale).toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="' + palette.muted + '" opacity="0.12" />',
-    '<text x="' + (pad * scale).toFixed(1) + '" y="' + (titleH * 0.72 * scale).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="' + fontSize + '" fill="' + palette.muted + '" letter-spacing="0.5px">' + title + '</text>',
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + (titleH).toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="' + palette.muted + '" opacity="0.12" />',
+    '<text x="' + (pad).toFixed(1) + '" y="' + (titleH * 0.72).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="' + fontSize + '" fill="' + palette.muted + '" letter-spacing="0.5px">' + title + '</text>',
     // Шапка таблицы
     '<g transform="translate(0,' + (titleH + padY).toFixed(1) + ')">',
     '<line x1="0" y1="0" x2="' + innerW.toFixed(1) + '" y2="0" stroke="' + palette.border + '" stroke-width="' + sStrokeMuted.toFixed(1) + '" />',
     '<text x="0" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="' + fontSize + '" fill="' + palette.muted + '">Стрелка</text>',
-    '<text x="' + (colSwatch * scale + 8 * scale).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + hProto + '</text>',
-    '<text x="' + (colSwatch * scale + colProto * scale + 8 * scale).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.text + '">' + hDesc + '</text>',
+    '<text x="' + (colSwatch + 8).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + hProto + '</text>',
+    '<text x="' + (colSwatch + colProto + 8).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.text + '">' + hDesc + '</text>',
     '</g>',
     // Строки таблицы
     items,
@@ -641,7 +634,6 @@ export default function App() {
 
   // --- Diagram stamp (red "editing prohibited" stamp) ---
   interface StampState {
-    visible: boolean;
     developer: string;
     approver: string;
     date: string;
@@ -652,19 +644,45 @@ export default function App() {
       if (raw) {
         const parsed = JSON.parse(raw) as Partial<StampState>;
         return {
-          visible: parsed.visible !== false,
           developer: typeof parsed.developer === 'string' ? parsed.developer : '',
           approver: typeof parsed.approver === 'string' ? parsed.approver : '',
           date: typeof parsed.date === 'string' ? parsed.date : '',
         };
       }
     } catch {}
-    return { visible: true, developer: '', approver: '', date: '' };
+    return { developer: '', approver: '', date: '' };
   };
   const [stamp, setStamp] = useState<StampState>(loadStoredStamp);
   useEffect(() => {
     localStorage.setItem('vsdoox.stamp', JSON.stringify(stamp));
   }, [stamp]);
+
+  // --- Annotation overlays (stamp & legend) visibility & screen positions ---
+  const [showAnnotations, setShowAnnotations] = useState<boolean>(() => {
+    try {
+      const raw = localStorage.getItem(ANNOTATIONS_STORAGE_KEY);
+      return raw ? JSON.parse(raw) === true : false;
+    } catch {
+      return false;
+    }
+  });
+  interface AnnPos { x: number; y: number; }
+  const [stampPos, setStampPos] = useState<AnnPos>({ x: 0, y: 0 });
+  const [legendPos, setLegendPos] = useState<AnnPos>({ x: 0, y: 0 });
+  const annotationDrag = useRef<{ kind: 'stamp' | 'legend'; startX: number; startY: number; pos: AnnPos } | null>(null);
+
+  useEffect(() => {
+    localStorage.setItem(ANNOTATIONS_STORAGE_KEY, JSON.stringify(showAnnotations));
+    if (!showAnnotations) return;
+    // Initialize overlays strictly at the bottom, laid out horizontally,
+    // on first show (positions are remembered while the tab is open).
+    if (stampPos.x === 0 && stampPos.y === 0) {
+      setStampPos({ x: window.innerWidth - STAMP_BASE_WIDTH - 16, y: window.innerHeight - 160 });
+    }
+    if (legendPos.x === 0 && legendPos.y === 0) {
+      setLegendPos({ x: 16, y: window.innerHeight - 220 });
+    }
+  }, [showAnnotations, stampPos, legendPos]);
   // Номер проекта берётся из названия схемы
   const projectNumber = projectName.trim() || '—';
 
@@ -1076,6 +1094,35 @@ export default function App() {
     }
   }, [nodes, connections, projectName]);
 
+  const handleAnnotationDrag = useCallback(
+    (kind: 'stamp' | 'legend') => (e: React.MouseEvent) => {
+      e.preventDefault();
+      const startPos = kind === 'stamp' ? stampPos : legendPos;
+      annotationDrag.current = {
+        kind,
+        startX: e.clientX,
+        startY: e.clientY,
+        pos: { x: startPos.x, y: startPos.y },
+      };
+      const onMove = (ev: MouseEvent) => {
+        const d = annotationDrag.current;
+        if (!d) return;
+        const dx = ev.clientX - d.startX;
+        const dy = ev.clientY - d.startY;
+        if (kind === 'stamp') setStampPos({ x: d.pos.x + dx, y: d.pos.y + dy });
+        else setLegendPos({ x: d.pos.x + dx, y: d.pos.y + dy });
+      };
+      const onUp = () => {
+        document.removeEventListener('mousemove', onMove);
+        document.removeEventListener('mouseup', onUp);
+        annotationDrag.current = null;
+      };
+      document.addEventListener('mousemove', onMove);
+      document.addEventListener('mouseup', onUp);
+    },
+    [stampPos, legendPos]
+  );
+
   const handleExportSVG = useCallback(async () => {
     try {
       const wrapper = reactFlowWrapper.current;
@@ -1131,7 +1178,8 @@ export default function App() {
               className.includes('react-flow__minimap') ||
               className.includes('boundary-handle') ||
               className.includes('diagram-boundary') ||
-              className.includes('diagram-legend')) {
+              className.includes('diagram-legend') ||
+              className.includes('diagram-stamp')) {
             return false;
           }
           return true;
@@ -1144,16 +1192,16 @@ export default function App() {
       if (svgDataUri.startsWith(SVG_DATA_URI_PREFIX)) {
         const decoded = decodeURIComponent(svgDataUri.slice(SVG_DATA_URI_PREFIX.length));
         let modified = decoded;
-        if (stamp.visible) {
-          const stampGroup = buildStampSvgGroup(crop.width, crop.height, stamp, projectNumber);
+        if (showAnnotations) {
+          const stampGroup = buildStampSvgGroup(stampPos.x - crop.x, stampPos.y - crop.y, stamp, projectNumber);
           if (stampGroup) modified = modified.replace(/(<\/svg>)/i, stampGroup + '$1');
         }
-        const legendGroup = buildLegendSvgGroup(crop.width, crop.height, connections, {
+        const legendGroup = connections.length > 0 ? buildLegendSvgGroup(legendPos.x - crop.x, legendPos.y - crop.y, connections, {
           surface: surfaceColor,
           border: borderColor,
           text: textColor,
           muted: mutedColor,
-        });
+        }) : '';
         if (legendGroup) modified = modified.replace(/(<\/svg>)/i, legendGroup + '$1');
         if (modified !== decoded) {
           svgDataUri = SVG_DATA_URI_PREFIX + encodeURIComponent(modified);
@@ -1170,7 +1218,7 @@ export default function App() {
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [projectName, boundary, viewport, stamp, connections]);
+  }, [projectName, boundary, viewport, stamp, connections, showAnnotations, stampPos, legendPos]);
 
   const handleBoundaryMouseDown = useCallback((e: React.MouseEvent, handle: string) => {
     e.stopPropagation();
@@ -1632,9 +1680,13 @@ export default function App() {
             <MiniMap />
           </ReactFlow>
 
-          {/* Diagram Legend (overlay, fixed in screen space, bottom-left). Shown only when there are connections. */}
-          {connections.length > 0 && (
-            <div className="diagram-legend">
+          {/* Diagram Legend (overlay, screen coords, draggable). Shown only when annotations enabled & connections exist. */}
+          {showAnnotations && connections.length > 0 && (
+            <div
+              className="diagram-legend"
+              style={{ left: legendPos.x, top: legendPos.y }}
+              onMouseDown={handleAnnotationDrag('legend')}
+            >
               <div className="diagram-legend__title">Легенда</div>
               <table className="diagram-legend__table">
                 <thead>
@@ -1712,28 +1764,38 @@ export default function App() {
           )}
 
           {!boundary && (
-            <button
-              className="add-boundary-btn"
-              onClick={() => {
-                const wrapper = reactFlowWrapper.current;
-                if (wrapper) {
-                  const rect = wrapper.getBoundingClientRect();
-                  // Center the boundary in the viewport
-                  const centerX = (-viewport.x + rect.width / 2) / viewport.zoom;
-                  const centerY = (-viewport.y + rect.height / 2) / viewport.zoom;
-                  setBoundary({ x: centerX - 200, y: centerY - 150, w: 400, h: 300 });
-                }
-              }}
-            >
-              + Добавить границу схемы
-            </button>
+            <>
+              <button
+                className="add-boundary-btn"
+                onClick={() => {
+                  const wrapper = reactFlowWrapper.current;
+                  if (wrapper) {
+                    const rect = wrapper.getBoundingClientRect();
+                    // Center the boundary in the viewport
+                    const centerX = (-viewport.x + rect.width / 2) / viewport.zoom;
+                    const centerY = (-viewport.y + rect.height / 2) / viewport.zoom;
+                    setBoundary({ x: centerX - 200, y: centerY - 150, w: 400, h: 300 });
+                  }
+                }}
+              >
+                + Добавить границу схемы
+              </button>
+              <button
+                className={`toggle-annotations-btn${showAnnotations ? ' toggle-annotations-btn--on' : ''}`}
+                onClick={() => setShowAnnotations((v) => !v)}
+                title={showAnnotations ? 'Скрыть аннотации' : 'Показать аннотации'}
+              >
+                {showAnnotations ? 'Аннотации: вкл.' : 'Аннотации: выкл.'}
+              </button>
+            </>
           )}
 
-          {/* Diagram stamp (overlay, fixed in screen space, not transformed by React Flow) */}
-          {stamp.visible && (
+          {/* Diagram stamp (overlay, screen coords, draggable). Shown when annotations enabled. */}
+          {showAnnotations && (
             <div
               className="diagram-stamp"
-              data-visible={stamp.visible ? 'true' : 'false'}
+              style={{ left: stampPos.x, top: stampPos.y }}
+              onMouseDown={handleAnnotationDrag('stamp')}
             >
               <div className="diagram-stamp__forbidden">
                 РЕДАКТИРОВАТЬ СХЕМУ ЗАПРЕЩЕНО
@@ -1817,12 +1879,6 @@ export default function App() {
 
                   <div className="settings-card settings-card--stamp">
                     <h3>Штамп схемы</h3>
-                    <button
-                      className={stamp.visible ? 'primary' : ''}
-                      onClick={() => setStamp((s) => ({ ...s, visible: !s.visible }))}
-                    >
-                      {stamp.visible ? 'вкл.' : 'выкл.'}
-                    </button>
                     <div className="row">
                       <input
                         value={stamp.developer}

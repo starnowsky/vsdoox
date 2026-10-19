@@ -1160,15 +1160,177 @@ button.del:hover { background: var(--surface-2); }
   transform: translateY(-1px);
 }
 
+.toggle-annotations-btn {
+  position: absolute;
+  top: 16px;
+  left: 170px;
+  z-index: 20;
+  padding: 8px 14px;
+  background: var(--surface-2);
+  color: var(--text);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+  box-shadow: var(--shadow-sm);
+  transition: background 0.15s, border-color 0.15s;
+}
+.toggle-annotations-btn:hover {
+  background: var(--surface-2-hover, var(--surface-2));
+}
+.toggle-annotations-btn--on {
+  background: var(--accent);
+  color: #fff;
+  border-color: var(--accent);
+}
+
 /* ---------- Скрытые элементы (по требованию) ---------- */
 /* «Мои проекты» — секция со списком проектов в сайдбаре */
 .sidebar section:has(> .projects) {
   display: none;
 }
 
-/* Штамп схемы — красный оверлей на холсте */
+/* ---------------------- Annotation overlays (stamp & legend) ---------------------- */
+/* Общие: фиксированы в координатах экрана, не подчиняются зуму React Flow. */
+.diagram-stamp,
+.diagram-legend {
+  position: absolute;
+  z-index: 20;
+  box-shadow: var(--shadow-lg);
+  user-select: none;
+  font-size: 12px;
+  color: var(--text);
+}
+
+/* Штамп схемы — красный оверлей на холсте. Ширина совпадает с нативным SVG-билдером (310px). */
 .diagram-stamp {
-  display: none;
+  width: 310px;
+  background: rgba(211, 47, 47, 0.06);
+  border: 2px solid var(--stamp, #d32f2f);
+  border-radius: 8px;
+  cursor: move;
+}
+
+.diagram-stamp__forbidden {
+  background: var(--stamp, #d32f2f);
+  color: #fff;
+  font-weight: 800;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  padding: 8px 12px;
+  text-transform: uppercase;
+  border-top-left-radius: 6px;
+  border-top-right-radius: 6px;
+}
+
+.diagram-stamp__table {
+  padding: 8px 10px 10px;
+}
+
+.diagram-stamp__row {
+  display: flex;
+  justify-content: space-between;
+  padding: 1px 0;
+  font-size: 11px;
+}
+
+.diagram-stamp__label {
+  font-weight: 700;
+  color: var(--stamp, #d32f2f);
+  white-space: nowrap;
+}
+
+.diagram-stamp__value {
+  text-align: right;
+  font-weight: 600;
+}
+
+.diagram-stamp__empty {
+  color: var(--text-muted, #6c757d);
+}
+
+/* ---------- Diagram Legend (overlay, bottom-left area, shown when connections exist) ---------- */
+.diagram-legend {
+  width: 340px;
+  max-width: 95vw;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+}
+
+.diagram-legend__title {
+  padding: 8px 10px;
+  font-weight: 700;
+  border-bottom: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--text-muted);
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  cursor: move;
+}
+
+.diagram-legend__title:hover {
+  background: var(--surface-2-hover, var(--surface-2));
+}
+
+.diagram-legend__table {
+  width: 100%;
+  border-collapse: collapse;
+  table-layout: fixed;
+}
+
+.diagram-legend__cell {
+  padding: 6px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: middle;
+  overflow: hidden;
+}
+
+.diagram-legend__cell--swatch {
+  width: 56px;
+  padding-left: 10px;
+}
+
+.diagram-legend__cell--proto {
+  width: 120px;
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.diagram-legend__cell--desc {
+  width: 1px;
+}
+
+.diagram-legend__swatch {
+  width: 36px;
+  height: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.diagram-legend__input {
+  width: 100%;
+  box-sizing: border-box;
+  background: transparent;
+  border: none;
+  color: var(--text);
+  font-size: 12px;
+  padding: 2px 0;
+}
+
+.diagram-legend__input::placeholder {
+  color: var(--text-muted);
+}
+
+.diagram-legend__input:focus {
+  outline: none;
+  background: rgba(255, 255, 255, 0.06);
+  border-radius: var(--radius-sm);
 }
 
 /* ---------- Diagram Legend (overlay, bottom-left, shown when connections exist) ---------- */
