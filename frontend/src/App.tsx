@@ -91,7 +91,87 @@ function buildStampSvgGroup(
     '</g>',
   ].join('');
 }
+
 import type { DeviceData } from './nodes';
+
+/** Нативный SVG-фрагмент с таблицей «Легенда» (встроен в итоговый SVG при экспорте).
+    Повторяет оформление .diagram-legend из index.css:
+    блок в левом нижнем углу с отступом 18px, строка на каждую связь:
+    цветная стрелка, Протокол/порт, Описание. */
+function buildLegendSvgGroup(
+  width: number,
+  height: number,
+  connections: Interaction[],
+  palette: { surface: string; border: string; text: string; muted: string },
+): string {
+  if (!connections.length) return '';
+
+  const pad = 18; // отступ от левого/нижнего края, как в CSS (left/bottom: 18px)
+  const rowH = 16; // шаг строки таблицы
+  const colSwatch = 56; // ширина колонки «Стрелка»
+  const colProto = 120; // ширина колонки «Протокол/порт»
+  const titleH = 24; // высота заголовка
+  const thH = 18; // высота шапки таблицы
+  const padY = 8; // внутренний отступ по Y
+
+  // Считаем высоту блока и масштабируем, чтобы влезло по ширине/высоте с отступами.
+  const baseW = Math.max(colSwatch + colProto + 120, 300);
+  const baseH = titleH + padY + thH + rowH * connections.length + padY + 6;
+  const scale = Math.min(1, (width - pad * 2) / baseW, (height - pad * 2) / baseH);
+  const sw = baseW * scale;
+  const sh = baseH * scale;
+  const gx = pad;
+  const gy = height - sh - pad;
+
+  const sR = 8 * scale; // радиус скругления
+  const fontSize = Math.max(9, Math.round(12 * scale));
+  const sStrokeMuted = Math.max(0.5, Math.round(1 * scale));
+
+  const gxT = gx + sR;
+  const gyT = gy + sR;
+  const innerW = sw - sR * 2;
+
+  const items = connections.map((c, i) => {
+    const color = connColor(c);
+    const proto = (c.protocol ?? 'any').toUpperCase() + (c.port ? '\\' + c.port : '');
+    const desc = escapeXml(c.description ?? '');
+    const y = gyT + titleH + padY + thH + i * rowH + rowH / 2 + 2;
+    return [
+      '<g transform="translate(' + gxT.toFixed(1) + ',' + gyT.toFixed(1) + ') scale(' + scale.toFixed(4) + ')">',
+      // Стрелка (цветная линия + треугольник)
+      '<line x1="0" y1="' + (i * rowH + rowH / 2 - 2).toFixed(1) + '" x2="34" y2="' + (i * rowH + rowH / 2 - 2).toFixed(1) + '" stroke="' + color + '" stroke-width="3" />',
+      '<polygon points="34,' + (i * rowH + rowH / 2 - 6).toFixed(1) + ' 44,' + (i * rowH + rowH / 2 - 2).toFixed(1) + ' 34,' + (i * rowH + rowH / 2 + 2).toFixed(1) + '" fill="' + color + '" />',
+      '</g>',
+      '<text x="' + (gxT + colSwatch * scale + 8 * scale).toFixed(1) + '" y="' + y.toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + escapeXml(proto) + '</text>',
+      '<text x="' + (gxT + colSwatch * scale + colProto * scale + 8 * scale).toFixed(1) + '" y="' + y.toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.muted + '">' + (desc || '—') + '</text>',
+    ].join('');
+  }).join('');
+
+  const title = escapeXml('Легенда');
+  const hProto = escapeXml('Протокол/порт');
+  const hDesc = escapeXml('Описание');
+
+  return [
+    '<g transform="translate(' + gx.toFixed(1) + ',' + gy.toFixed(1) + ') scale(' + scale.toFixed(4) + ') rotate(-3 ' + (sw / 2).toFixed(1) + ' ' + (sh / 2).toFixed(1) + ')">',
+    // Подложка блока (как background: var(--surface))
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="' + palette.surface + '" />',
+    // Рамка (как border: 1px solid var(--border))
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + sh.toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="none" stroke="' + palette.border + '" stroke-width="' + sStrokeMuted.toFixed(1) + '" pointer-events="none" />',
+    // Заголовок
+    '<rect x="0" y="0" width="' + sw.toFixed(1) + '" height="' + (titleH * scale).toFixed(1) + '" rx="' + sR.toFixed(1) + '" ry="' + sR.toFixed(1) + '" fill="' + palette.muted + '" opacity="0.12" />',
+    '<text x="' + (pad * scale).toFixed(1) + '" y="' + (titleH * 0.72 * scale).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="' + fontSize + '" fill="' + palette.muted + '" letter-spacing="0.5px">' + title + '</text>',
+    // Шапка таблицы
+    '<g transform="translate(0,' + (titleH + padY).toFixed(1) + ')">',
+    '<line x1="0" y1="0" x2="' + innerW.toFixed(1) + '" y2="0" stroke="' + palette.border + '" stroke-width="' + sStrokeMuted.toFixed(1) + '" />',
+    '<text x="0" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-weight="700" font-size="' + fontSize + '" fill="' + palette.muted + '">Стрелка</text>',
+    '<text x="' + (colSwatch * scale + 8 * scale).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-weight="600" font-size="' + fontSize + '" fill="' + palette.text + '">' + hProto + '</text>',
+    '<text x="' + (colSwatch * scale + colProto * scale + 8 * scale).toFixed(1) + '" y="' + (fontSize * 0.75).toFixed(1) + '" font-family="sans-serif" font-size="' + fontSize + '" fill="' + palette.text + '">' + hDesc + '</text>',
+    '</g>',
+    // Строки таблицы
+    items,
+    '</g>',
+  ].join('');
+}
 import { OrthoEdge } from './edges';
 import {
   routeConnections,
@@ -1034,6 +1114,9 @@ export default function App() {
 
       const computed = getComputedStyle(document.documentElement);
       const surfaceColor = computed.getPropertyValue('--surface').trim() || '#ffffff';
+      const borderColor = computed.getPropertyValue('--border').trim() || '#cdd5de';
+      const textColor = computed.getPropertyValue('--text').trim() || '#2a3038';
+      const mutedColor = computed.getPropertyValue('--text-muted').trim() || '#6c757d';
 
       const svg = await toSvg(canvas as HTMLElement, {
         backgroundColor: surfaceColor,
@@ -1041,31 +1124,39 @@ export default function App() {
         height: crop.height,
         style: { transform: `translate(${-crop.x}px, ${-crop.y}px)` },
         filter: (node) => {
-          // Exclude controls, minimap, and boundary frame/handles
+          // Exclude controls, minimap, boundary frame/handles, and the legend overlay
           if (!(node instanceof Element)) return true;
           const className = node.getAttribute('class') ?? '';
           if (className.includes('react-flow__controls') ||
               className.includes('react-flow__minimap') ||
               className.includes('boundary-handle') ||
-              className.includes('diagram-boundary')) {
+              className.includes('diagram-boundary') ||
+              className.includes('diagram-legend')) {
             return false;
           }
           return true;
         },
       });
 
-      // Встраиваем красный штамп в итоговый SVG, если он включен.
+      // Встраиваем красный штамп (если включён) и таблицу «Легенда» в итоговый SVG.
       const SVG_DATA_URI_PREFIX = 'data:image/svg+xml;charset=utf-8,';
       let svgDataUri = svg;
-      if (stamp.visible && svgDataUri.startsWith(SVG_DATA_URI_PREFIX)) {
+      if (svgDataUri.startsWith(SVG_DATA_URI_PREFIX)) {
         const decoded = decodeURIComponent(svgDataUri.slice(SVG_DATA_URI_PREFIX.length));
-        const stampGroup = buildStampSvgGroup(crop.width, crop.height, stamp, projectNumber);
-        if (stampGroup) {
-          const lastClose = decoded.lastIndexOf('</svg>');
-          if (lastClose >= 0) {
-            const modified = decoded.slice(0, lastClose) + stampGroup + decoded.slice(lastClose);
-            svgDataUri = SVG_DATA_URI_PREFIX + encodeURIComponent(modified);
-          }
+        let modified = decoded;
+        if (stamp.visible) {
+          const stampGroup = buildStampSvgGroup(crop.width, crop.height, stamp, projectNumber);
+          if (stampGroup) modified = modified.replace(/(<\/svg>)/i, stampGroup + '$1');
+        }
+        const legendGroup = buildLegendSvgGroup(crop.width, crop.height, connections, {
+          surface: surfaceColor,
+          border: borderColor,
+          text: textColor,
+          muted: mutedColor,
+        });
+        if (legendGroup) modified = modified.replace(/(<\/svg>)/i, legendGroup + '$1');
+        if (modified !== decoded) {
+          svgDataUri = SVG_DATA_URI_PREFIX + encodeURIComponent(modified);
         }
       }
 
@@ -1079,7 +1170,7 @@ export default function App() {
     } catch (e) {
       setStatus((e as Error).message);
     }
-  }, [projectName, boundary, viewport, stamp]);
+  }, [projectName, boundary, viewport, stamp, connections]);
 
   const handleBoundaryMouseDown = useCallback((e: React.MouseEvent, handle: string) => {
     e.stopPropagation();
